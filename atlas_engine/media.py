@@ -2,7 +2,7 @@
 SAM's accepted worker is subordinate inference/cache only, never a second product API.
 All file paths originate from operator config or Engine-owned immutable snapshots.
 """
-import fcntl,hashlib,importlib.util,io,json,os,signal,subprocess,sys,threading,time,uuid
+import fcntl,hashlib,importlib.util,io,json,os,signal,socket,subprocess,sys,threading,time,uuid
 from pathlib import Path
 from PIL import Image
 from .contracts import Fault
@@ -13,6 +13,7 @@ class Media:
     def __init__(self,engine,config=None):
         self.engine=engine;self.repo=engine.repo;self.config=config or {}
         self.root=self.repo.root/'media';self.lock=threading.Lock();self.mask_client=None
+        self.mask_process=None;self.mask_owner=None
         if self.config:self.root.mkdir(exist_ok=True,mode=0o700)
     def capabilities(self):
         return {k:{'enabled':bool(self.config.get(k)), 'optional':True,'automatic':False,'admission':'durable_async_one_slot' if k=='censor' else 'synchronous','cancellation':'unsupported','restart':'interrupted_no_replay'} for k in ('mask','censor')}
@@ -68,15 +69,59 @@ class Media:
         return raw,row['sha256']
     def mask_call(self,args,principal):
         config=self.enabled('mask');root=Path(config['root']).resolve()
+        if not (root/'backend-paths.json').is_file():
+            raise Fault('UNAVAILABLE','mask requires explicit deployment-owned backend-paths.json in a private package root')
         if self.mask_client is None:
+            runtime=root/'runtime';runtime.mkdir(mode=0o700,exist_ok=True)
+            owner=(runtime/'engine.lock').open('a')
+            try:fcntl.flock(owner,fcntl.LOCK_EX|fcntl.LOCK_NB)
+            except BlockingIOError:
+                owner.close();raise Fault('CAPACITY','mask root already owned; configure a new private package root')
+            # Refuse even a stale socket: never attach to or remove another worker.
+            if (runtime/'worker.sock').exists():
+                owner.close();raise Fault('UNAVAILABLE','mask socket already exists; configure a new private package root')
+            self.mask_owner=owner
             name='_atlas_mask_subordinate_'+hashlib.sha256(str(root).encode()).hexdigest()[:12]
             spec=importlib.util.spec_from_file_location(name,root/'atlas_mask/__init__.py',submodule_search_locations=[str(root/'atlas_mask')])
             module=importlib.util.module_from_spec(spec);sys.modules[name]=module;spec.loader.exec_module(module)
             self.mask_client=importlib.import_module(name+'.client')
+            # The subordinate client must never spawn an unowned replacement.
+            def connect(deadline):
+                s=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM)
+                try:
+                    s.settimeout(max(.001,deadline-time.monotonic()));s.connect(str(self.mask_client.SOCKET));return s
+                except BaseException:s.close();raise
+            self.mask_client.connect=connect
+        if self.mask_process is None or self.mask_process.poll() is not None:
+            if self.mask_process is not None:self.mask_process.wait()
+            env={k:v for k,v in os.environ.items() if k not in ('PYTHONPATH','PYTHONHOME','VIRTUAL_ENV')}
+            env.update(CUDA_VISIBLE_DEVICES='',HF_HUB_OFFLINE='1',PYTHONDONTWRITEBYTECODE='1')
+            with (root/'runtime'/'worker.log').open('ab') as log:
+                self.mask_process=subprocess.Popen([str(self.mask_client.PYTHON),'-I','-B',str(Path(__file__).with_name('mask_worker.py')),str(os.getpid()),str(root)],cwd=root,env=env,stdin=subprocess.DEVNULL,stdout=log,stderr=log,close_fds=True,start_new_session=True)
+            deadline=time.monotonic()+15
+            while not self.mask_client.SOCKET.exists():
+                if self.engine.stop.is_set():raise Fault('STOPPING','Engine is stopping')
+                if self.mask_process.poll() is not None:raise Fault('UNAVAILABLE','owned mask worker exited; inspect private runtime log')
+                if time.monotonic()>=deadline:
+                    self.close();raise Fault('TIMEOUT','owned mask worker startup deadline')
+                self.engine.stop.wait(.02)
         # Shared trusted Engine namespace, not a per-source authorization gate.
         result=self.mask_client.call(args,hashlib.sha256(b'atlas-engine:shared-media').hexdigest())
         if not result.get('ok'):raise Fault(result['error']['code'],result['error']['message'])
         return result
+    def close(self):
+        process=self.mask_process
+        if process is not None:
+            if process.poll() is None:
+                process.terminate()
+                try:process.wait(timeout=2)
+                except subprocess.TimeoutExpired:process.kill();process.wait(timeout=2)
+            else:process.wait()
+            # Only the socket of our reaped worker; never an existing foreign socket.
+            self.mask_client.SOCKET.unlink(missing_ok=True)
+            self.mask_process=None
+        if self.mask_owner is not None:self.mask_owner.close();self.mask_owner=None
+        self.mask_client=None
     def censor_call(self,spec,folder):
         config=self.enabled('censor')
         if not all(Path(config[k]).is_file() for k in ('python','model')) or not (Path(config['upstream'])/'mosaic.py').is_file():raise Fault('UNAVAILABLE','configured shared NTD11 installation incomplete')
@@ -246,10 +291,16 @@ class Media:
                 manifest=Path(result['manifest_path'])
                 for candidate in result['candidates']:
                     for key in ('mask_file','overlay_file','logits_file'):
-                        name=candidate[key];artifacts.append(self.artifact(jid,name,manifest.parent/name))
+                        name=candidate[key];artifacts.append(self.artifact(jid,name,manifest.parent/name,'image/png' if name.endswith('.png') else 'application/octet-stream'))
                 # Keep exact SAM manifest on disk for accepted prior/logit verification.
                 result={k:v for k,v in result.items() if k not in ('manifest_path','output_dir','image_path')}
                 result['params']={k:v for k,v in p.items() if k!='request_id'}
+                result['mask_polarity']='white=foreground; black=background'
+                result['raster_policy']='stored raster; no EXIF transpose; alpha converted to RGB by subordinate'
+                if prior:
+                    prior_manifest=Path(prior['manifest_path']).read_bytes()
+                    candidate=json.loads(prior_manifest)['candidates'][prior['candidate']]
+                    result['prior_provenance']={'candidate':prior['candidate'],'manifest_sha256':hashlib.sha256(prior_manifest).hexdigest(),'logits_sha256':candidate['logits_sha256'],'reference':p['prior']}
             public_manifest=folder/'manifest.json';public_manifest.write_text(dump({**result,'engine_job_id':jid})+'\n')
             artifacts.append(self.artifact(jid,'manifest.json',public_manifest,'application/json'))
             state='succeeded' if result['ok'] else 'partially_succeeded' if any(a['image_name']!='manifest.json' for a in artifacts) else 'failed'

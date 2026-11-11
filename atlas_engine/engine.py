@@ -78,6 +78,7 @@ class Engine:
         if self.native_events:self.native_events.start()
     def close(self):
         self.stop.set();self.wake.set()
+        self.media.close()
         if self.native_events:self.native_events.close()
         for worker in (self.thread,getattr(self,'media_thread',None),getattr(self,'cpu_thread',None),getattr(self,'delivery_thread',None),getattr(self,'acquisition_thread',None)):
             if worker:worker.join(timeout=35)

@@ -22,7 +22,7 @@ def mask(args,principal):
     for key,name in [('mask_file','mask.png'),('overlay_file','overlay.png'),('logits_file','candidate-0.npy')]:
         (folder/name).write_bytes(raw if name.endswith('.png') else b'labelled stand-in, not numpy evidence')
         rows.append((key,name))
-    result={'ok':True,'candidates':[dict(rows)]};path=folder/'subordinate.json';path.write_text(json.dumps(result))
+    result={'ok':True,'candidates':[dict(rows,logits_sha256=hashlib.sha256((folder/'candidate-0.npy').read_bytes()).hexdigest())]};path=folder/'subordinate.json';path.write_text(json.dumps(result))
     return result|{'manifest_path':str(path),'image_path':'private','output_dir':str(folder)}
 e.media.mask_call=mask
 assert ok('mask.setup',{'upload_id':u['upload_id']})=={'ok':True,'cache_id':'cache'}

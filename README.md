@@ -1,6 +1,6 @@
 # Atlas
 
-Standalone headless Atlas, development package 0.4.0.dev8. The canonical corpus is embedded Qdrant; operational state is SQLite. HTTP, Streamable HTTP MCP and a thin CLI share the existing Engine dispatch. Hermes and InvokeAI are optional clients/backend integrations, not startup dependencies.
+Standalone headless Atlas, development package 0.4.0.dev9. The canonical corpus is embedded Qdrant; operational state is SQLite. HTTP, Streamable HTTP MCP and a thin CLI share the existing Engine dispatch. Hermes and InvokeAI are optional clients/backend integrations, not startup dependencies.
 
 This is a development package, not completion of the full Atlas product. See [SPEC.md](SPEC.md) and [OPERATIONS.json](OPERATIONS.json) for retained capabilities and exercised scope. No UI is delivered.
 
@@ -92,7 +92,7 @@ Use the same authenticated HTTP operations or MCP tools:
 5. `censor.get`: job_id. Inspect job state/error/result; the operation envelope alone is not success. `jobs.events` is also available.
 6. `artifact.list`: job_id; `artifact.read`: artifact_id, offset, size. Decode base64 and check SHA-256 against the artifact receipt. The manifest records input/output digests, dimensions, options, detections and model/renderer hashes.
 
-One shared media slot includes queued/running censor and synchronous mask operations. Another new intent receives CAPACITY; there is no hidden backlog. Exact replay reads the original job even while inference occupies the slot. Polling, events, artifacts and core reads do not take that lock; the existing numerical creative worker remains separate. Normal stop terminates/reaps the owned child; abrupt owner death kills it on Linux. Restart marks queued/running media failed with INTERRUPTED and never silently reruns; use a new request_id only for an explicit new attempt. Public media cancellation is unsupported. Historical completed artifacts/prior manifests and mask schemas remain available. Actual mask inference is not part of this slice.
+One shared media slot includes queued/running censor and synchronous mask operations. Another new intent receives CAPACITY; there is no hidden backlog. Exact replay reads the original job even while inference occupies the slot. Polling, events, artifacts and core reads do not take that lock; the existing numerical creative worker remains separate. Normal stop terminates/reaps the owned child; abrupt owner death kills it on Linux. Restart marks queued/running media failed with INTERRUPTED and never silently reruns; use a new request_id only for an explicit new attempt. Public media cancellation is unsupported. Historical completed artifacts/prior manifests remain available. Actual mask acceptance is described below.
 
 Existing byte/pixel/batch/storage limits and CPU thread/RSS/deadline caps remain. Admission reserves 520 MiB of output headroom against the 2 GiB default media budget; cleanup is operator-controlled. Offline flags and disabled dependency autoinstall are not a general OS network sandbox. Back up only after stopping/draining the Engine, using the existing shared-lock offline backup command; restored-root quarantine still blocks dispatch/workers until reconciliation. See [BACKUP.md](BACKUP.md).
 
@@ -103,7 +103,31 @@ Existing byte/pixel/batch/storage limits and CPU thread/RSS/deadline caps remain
   --upstream /absolute/anime-mosaic --model /absolute/ntd11.pt
 ```
 
-The installed dev8 runner exercised real CPU inference on safe synthetic pixels without detections, original-byte preservation, HTTP/MCP artifact/hash/dimensions and restart/replay. It separately labels its slow-child fixture for latency/capacity/timeout/stop/crash checks. Synthetic no-detection input proves execution, not detector quality or detected-region rendering. No live service, GPU job or model download was used. Source, wheel and installed Python module sets/bytes must match before acceptance. Docker remains dev6, without dev7/dev8 changes.
+The installed dev8 runner exercised real CPU inference on safe synthetic pixels without detections, original-byte preservation, HTTP/MCP artifact/hash/dimensions and restart/replay. It separately labels its slow-child fixture for latency/capacity/timeout/stop/crash checks. Synthetic no-detection input proves execution, not detector quality or detected-region rendering. No live service, GPU job or model download was used. Source, wheel and installed Python module sets/bytes must match before acceptance. Docker remains dev6, without dev7/dev8/dev9 changes.
+
+## Optional standalone CPU mask
+
+Set `"mask":{"root":"private-mask"}` in media.json. Root must be a NEW private copy of the externally provisioned `atlas_mask` Python package, not a symlink to a shared deployment. Copy package source only, never its runtime/socket/cache or someone else's config. Add an operator-owned `backend-paths.json` with exactly `python`, `source`, `weights` absolute paths to the trusted CPU environment, MobileSAM source and checkpoint. The external package currently requires absolute inner paths; Atlas resolves `mask.root` relative to media.json. Nothing is bundled or downloaded. Use a short local root: Unix socket paths have a platform length limit.
+
+Engine refuses pre-existing sockets and competing root owners. It launches/reaps its own worker, with Linux parent-death binding; the subordinate client cannot spawn replacements. After a hard kill a stale socket may remain: only after verifying that private worker is dead may its operator remove that private socket, or configure a new private root. Never reset/release/clean up a shared worker. Idle expiry is also possible.
+
+After the same verified media upload:
+
+1. `mask.setup`: `{"upload_id":"UPLOAD"}` → cache_id, original width/height, source SHA-256. Stored raster coordinates, no EXIF rotation; alpha is discarded by RGB conversion, not composited.
+2. `mask.segment`: `{"request_id":"mask-1","cache_id":"CACHE","points":[{"x":160,"y":130,"label":1},{"x":20,"y":20,"label":0}],"box":[60,40,245,205],"multimask":true,"annotate_prompts":false}`. Returns a **synchronous** job; inspect state. Points/box are original raster pixels. White mask pixels mean foreground, black background; native inpaint import is not accepted here.
+3. Choose an explicit candidate index, not an assumed automatic winner. Refine with a new request_id, same cache_id, prompts and `"prior":{"job_id":"FIRST_JOB","candidate":1}`. The result retains public prior reference, exact source-manifest and selected-logits SHA-256. The original subordinate manifest stays immutable for model/image/dimensions/logits validation.
+4. `artifact.list` / `artifact.read` expose every candidate PNG, overlay PNG, finite float32 `(1,256,256)` NPY logits and public manifest. Check receipt hash/size; PNG MIME is image/png. SDK MCP uses `mask_setup`, `mask_segment`, `mask_get`, `artifact_list`, `artifact_read` with identical inputs.
+
+Restart does not restore an ephemeral cache: a new segment using it fails STALE_CACHE with setup-again guidance. Completed same-request replay/artifact reads do not load a model. New setup from the original upload permits refinement using the completed prior. Mask stays synchronous: the exercised 320×240 geometry segment took about 0.18 seconds; this is not a latency SLA or async acceptance. Health is explicit and can start a worker, ordinary status does not.
+
+Repeat installed acceptance with an explicitly supplied NEW private backend and outside-source output:
+
+```sh
+/absolute/atlas-venv/bin/python -I -B verification/mask_portable.py \
+  --out /new/private/mask-evidence --backend /absolute/private-mask
+```
+
+The dev9 synthetic object acceptance establishes actual CPU model execution, binary polarity, candidate artifacts, prior refusals, restart/cache expiry and original-byte preservation, not broad segmentation quality, EXIF/alpha image-suite acceptance or native Canvas integration. Weights/dependencies/licensing remain operator responsibilities; Docker stays dev6.
 
 ## Native workspace prompt subset
 
@@ -166,7 +190,7 @@ This narrow installed regression uses synthetic DTOs and PNG bytes; it is not im
 
 [Build and isolated bridge run](container/README.md) documents the non-root CPU image, private mounted configuration, writable state volume and repeatable `--docker-image` boundary acceptance. Its base digest and hashed dependency inputs are pinned independently of the package version ranges. HTTP, real MCP and the installed host CLI were exercised against the built image on clean volumes, including auth negatives, duplicate ownership refusal and restart persistence.
 
-The retained CPU Docker image is 0.4.0.dev6 and does not contain the dev7 typed-result or dev8 media delta; neither delta rebuilt the image. It was rebuilt and accepted for dev6: installed source/wheel/image module equality, real HTTP/MCP/host CLI, owner refusal and restart persistence. The installed `atlas-state` executable also completed populated synthetic offline backup→new-root restore inside the non-root read-only image with networking disabled, exact durable bytes/inventory comparison, shared-lock refusal and quarantine/reconciliation checks; see [BACKUP.md](BACKUP.md). Full legacy migration, full native server execution, GPU jobs and container media inference remain unaccepted (installed host censor acceptance is documented above). Source licensing/third-party redistribution, SBOM and release provenance still need release review before publication. No live deployment or public service is part of this delivery.
+The retained CPU Docker image is 0.4.0.dev6 and does not contain the dev7 typed-result, dev8 censor or dev9 mask delta; these deltas did not rebuild the image. It was rebuilt and accepted for dev6: installed source/wheel/image module equality, real HTTP/MCP/host CLI, owner refusal and restart persistence. The installed `atlas-state` executable also completed populated synthetic offline backup→new-root restore inside the non-root read-only image with networking disabled, exact durable bytes/inventory comparison, shared-lock refusal and quarantine/reconciliation checks; see [BACKUP.md](BACKUP.md). Full legacy migration, full native server execution, GPU jobs and container media inference remain unaccepted (installed host censor acceptance is documented above). Source licensing/third-party redistribution, SBOM and release provenance still need release review before publication. No live deployment or public service is part of this delivery.
 
 ## Populated literal search and numerical creative discovery
 

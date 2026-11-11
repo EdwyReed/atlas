@@ -1,5 +1,11 @@
 # Atlas — headless standalone
 
+## Optional CPU mask — dev9 contract
+
+Use an explicit private copy of atlas_mask and deployment-owned backend-paths.json, never a pre-existing socket or sibling/personal defaults. Engine owns the worker lifetime, private root lock and ephemeral cache. Graceful shutdown reaps it; Linux parent death kills it. Completed replay and artifact reads never start inference. Restart requires setup again, preserving completed job priors. Retain synchronous segment unless actual execution demonstrates a need for the existing asynchronous lane; no generic inference framework.
+
+Acceptance: installed authenticated HTTP/MCP upload → original-raster setup → points/box multimask → explicit job-candidate refinement → downloadable exact mask/overlay/float32 logits/manifest. Verify dimensions, binary foreground polarity, original bytes, prior image/model/dimensions/hash/shape refusal, replay/restarted cache expiry and restored-root no inference. Reuse donor source/runtime/weights read-only. Evidence outside Git; no live changes, model downloads or GPU. Docker remains dev6.
+
 ## Optional CPU censor — dev8 contract
 
 One Engine-owned media thread executes newly admitted censor work from the existing jobs ledger, with one shared mask/censor slot and no new database or scheduler. `censor.process` durably captures validated input bytes/digests before returning queued; `censor.get`, jobs/events/artifact reads and core operations never take the inference lock. Exact replay returns the existing receipt even while busy. Restart marks queued/running media INTERRUPTED and never blindly executes it again. Graceful stop terminates/reaps the owned CPU child within a bound. Public cancellation remains unsupported. Existing mask inputs and synchronous execution remain compatible; actual mask inference is not claimed.
@@ -29,7 +35,7 @@ This slice must demonstrate authenticated HTTP status/capabilities/input schemas
 
 ## Implementation boundary
 
-- Package `atlas-engine` 0.4.0.dev8; executable `atlas` (alias `atlas-engine`), `atlas-client` and offline `atlas-state`.
+- Package `atlas-engine` 0.4.0.dev9; executable `atlas` (alias `atlas-engine`), `atlas-client` and offline `atlas-state`.
 - Configuration is explicit JSON, paths relative to its directory. Defaults → config → explicit `--root/--host/--port`. No environment configuration, `.env` discovery or Hermes imports. Secret references are private files. No embedded plaintext InvokeAI token field.
 - Loopback IP bind by default; explicit container mode binds 0.0.0.0 only with an exact `container_endpoint` of `http://127.0.0.1:HOST_PORT`. Container Host/Origin allowlists contain only that endpoint; Docker publication MUST bind host 127.0.0.1. One process; no Uvicorn workers or reload. Every HTTP path, including MCP and unknown artifact paths, passes the same bearer/Host/Origin gate. Old public UI is not mounted or shipped.
 - Corpus is `root/corpus`; ledger/artifacts/cache belong to `root`. Existing lifetime locks and corpus revision CAS are reused. This is not distributed Qdrant CAS.
@@ -53,7 +59,7 @@ This slice must demonstrate authenticated HTTP status/capabilities/input schemas
 | Generation/batch/queue/observation/cancel | Scoped durable admission and GET-receipt recovery implemented on existing generation path; isolated native queue admission/cancel exercised with fixture graph codec. No native graph execution or GPU family acceptance |
 | Boards/images/uploads/artifact fetch/publish | Retained; no native write or artifact transfer run |
 | Inpaint/upscale/refinement and concrete graphs | Existing recipe mechanisms retained; GPU/mask polarity/lineage acceptance pending; refinement coverage not established |
-| Mask/censor/media workers | dev8 installed censor: real NTD11 CPU synthetic no-detection inference, durable async admission, independent polling and verified HTTP/MCP artifacts/replay/restart. Mask synchronous contract retained; actual mask inference unaccepted |
+| Mask/censor/media workers | dev8 installed censor: real NTD11 CPU synthetic no-detection inference, durable async admission, independent polling and verified HTTP/MCP artifacts/replay/restart. dev9 installed mask: actual MobileSAM CPU original-raster setup, points/box candidates, explicit job-prior refinement, downloadable PNG/overlay/float32 logits/manifests, replay/restart/cache expiry verified on synthetic geometry; synchronous admission remains explicit |
 | Native projects/workspace CAS/codecs and callable saved workflows | Narrow split-v4 generate-widget prompt codec implemented and fixture-tested; isolated pinned native router/service/SQLite smoke exercised. Full native server/auth, other codecs and callable saved workflows not accepted |
 | Full Canvas/compiler and native image-map semantic search | Not delivered; concrete versioned subsets/negotiated adapters remain target work |
 | Backup/restore/history/bytes/provenance/migration | Same-format offline backup→new-root restore implemented; populated synthetic five-collection raw preimage/history/evidence/tombstone/bytes and quarantine/reconciliation exercised. Full retained private legacy corpus migration NOT accepted; see BACKUP.md |
