@@ -23,6 +23,7 @@ class Config(BaseModel):
     clients_file: Path
     host: str = '127.0.0.1'
     port: int = Field(default=12088, ge=1, le=65535)
+    container_endpoint: str | None = None
     vocabulary: Path | None = None
     connections: list[Connection] = Field(default_factory=list, max_length=1)
     reference_url: str | None = None
@@ -39,8 +40,14 @@ class Config(BaseModel):
     def load(cls, path, **overrides):
         path = Path(path).absolute()
         config = cls.model_validate(json.loads(path.read_text()) | {k: v for k, v in overrides.items() if v is not None})
-        if not ipaddress.ip_address(config.host).is_loopback:
-            raise ValueError('this release requires a loopback IP bind')
+        if config.container_endpoint is not None:
+            u = urlsplit(config.container_endpoint)
+            if (config.host != '0.0.0.0' or u.scheme != 'http' or
+                    u.hostname != '127.0.0.1' or not u.port or
+                    config.container_endpoint != f'http://127.0.0.1:{u.port}'):
+                raise ValueError('container_endpoint requires 0.0.0.0 bind and exact http://127.0.0.1:PORT endpoint')
+        elif not ipaddress.ip_address(config.host).is_loopback:
+            raise ValueError('this release requires a loopback IP bind or explicit container_endpoint')
         for name in ('root', 'clients_file', 'vocabulary', 'reference_token_file', 'media_config_file',
                      'reference_mirror', 'reference_delta', 'projection_dir', 'policy_file'):
             value = getattr(config, name)

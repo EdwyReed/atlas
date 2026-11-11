@@ -37,10 +37,12 @@ async def engine_call(engine, op, arguments, principal, source):
         canceled.set()
 
 class Auth:
-    def __init__(self,app,clients,port,host='127.0.0.1'):
+    def __init__(self,app,clients,port,host='127.0.0.1',container_endpoint=None):
         self.app=app;self.clients=clients
         address='['+host+']' if ':' in host else host
         self.hosts={address+':'+str(port),'localhost:'+str(port)}
+        if container_endpoint is not None:
+            self.hosts={container_endpoint.removeprefix('http://')}
         self.origins={'http://'+h for h in self.hosts}
     async def __call__(self,scope,receive,send):
         if scope['type']!='http':return await self.app(scope,receive,send)
@@ -57,7 +59,7 @@ class Auth:
         scope['atlas_identity']=identity
         await self.app(scope,receive,send)
 
-def make_app(engine,clients,port,host='127.0.0.1'):
+def make_app(engine,clients,port,host='127.0.0.1',container_endpoint=None):
     mcp=Server('atlas-engine')
     @mcp.list_tools()
     async def list_tools():
@@ -92,7 +94,7 @@ def make_app(engine,clients,port,host='127.0.0.1'):
             async with manager.run():yield
         finally:await asyncio.to_thread(engine.close)
     app=Starlette(routes=[Route('/v1/ops/{operation}',ops,methods=['POST']),Route('/v1/schema',schema),Mount('/mcp',app=mcp_app)],lifespan=lifespan)
-    return Auth(app,clients,port,host)
+    return Auth(app,clients,port,host,container_endpoint)
 def main():
     from .config import Config, clients, secret, bind_connection
     from .contracts import Fault
@@ -137,7 +139,7 @@ def main():
                           civitai_url=config.civitai_url,media_config=media)
             engine.startup_mode='standalone'
             engine.connection_id=connection.id if connection else None
-            uvicorn.run(make_app(engine,identities,config.port,config.host),host=config.host,port=config.port,log_level='warning',access_log=False)
+            uvicorn.run(make_app(engine,identities,config.port,config.host,config.container_endpoint),host=config.host,port=config.port,log_level='warning',access_log=False)
     except (OSError,ValueError,Fault) as e:
         p.exit(1,'Atlas startup refused: '+getattr(e,'code',type(e).__name__)+': '+str(e)+'\n')
 if __name__=='__main__':main()

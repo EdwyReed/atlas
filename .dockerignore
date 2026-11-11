@@ -1,0 +1,8 @@
+**
+!Dockerfile
+!pyproject.toml
+!README.md
+!requirements-cpu.lock
+!requirements-build.lock
+!atlas_engine/
+!atlas_engine/*.py

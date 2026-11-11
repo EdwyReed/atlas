@@ -46,7 +46,7 @@ Run requests in another terminal in `atlas-run`:
   '{"collection":"tags","identity":{"tag":"example"}}'
 ```
 
-The CLI's `--endpoint` defaults to `http://127.0.0.1:12088`. HTTP operations are `POST /v1/ops/{operation}` with a JSON object and bearer authentication. Input schemas are `GET /v1/schema`. MCP is Streamable HTTP at `/mcp/`, with the same authentication header; tool names replace operation dots with underscores. Host and browser Origin must match the configured loopback listener (or localhost on its port). Non-browser clients omit Origin. No anonymous endpoint is exposed.
+The CLI's `--endpoint` defaults to `http://127.0.0.1:12088`. HTTP operations are `POST /v1/ops/{operation}` with a JSON object and bearer authentication. Input schemas are `GET /v1/schema`. MCP is Streamable HTTP at `/mcp/`, with the same authentication header; tool names replace operation dots with underscores. In ordinary launcher mode, Host and browser Origin must match the configured loopback listener (or localhost on its port). Explicit container mode accepts only its configured external loopback endpoint; see [container/README.md](container/README.md). Non-browser clients omit Origin. No anonymous endpoint is exposed.
 
 Stop with Ctrl-C/SIGTERM and restart with the same config. Do not open the corpus from another process while the daemon owns it. Request IDs are durable intents: identical retries return the previous receipt; changed input under the same ID conflicts. Attribution metadata is not a separate application ACL.
 
@@ -85,4 +85,8 @@ From the source directory, using the environment where the package is installed:
 
 The output directory must not exist. It holds synthetic data, logs, generated credentials and `result.json`; keep it OUTSIDE the source/release. The Linux runner exercises a nondefault `127.0.0.2` bind, rejects unintended non-loopback child connections and uses no live corpus/backend. It compares installed/source/wheel module sets and bytes, exercises real MCP initialization/list/call, CLI/HTTP replay, auth failures, owner contention and restart. Omitting `--wheel` skips the wheel comparison only.
 
-No Docker build, populated migration/restore, native execution, GPU job or packaged media inference is claimed here. Dependency version ranges are not a hashed release lock. Source licensing/third-party redistribution and release provenance still need the release review before publication.
+## CPU Docker delivery
+
+[Build and isolated bridge run](container/README.md) documents the non-root CPU image, private mounted configuration, writable state volume and repeatable `--docker-image` boundary acceptance. Its base digest and hashed dependency inputs are pinned independently of the package version ranges. HTTP, real MCP and the installed host CLI were exercised against the built image on clean volumes, including auth negatives, duplicate ownership refusal and restart persistence.
+
+No populated migration/restore, native execution, GPU job or packaged media inference is claimed here. Source licensing/third-party redistribution, SBOM and release provenance still need the release review before publication. No live deployment or public service is part of this delivery.

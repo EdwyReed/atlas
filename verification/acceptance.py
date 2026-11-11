@@ -46,6 +46,7 @@ def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--out', type=Path, required=True)
     p.add_argument('--wheel', type=Path)
+    p.add_argument('--docker-image', help='exercise the same scenarios via isolated bridge container')
     p.add_argument('--child', action='store_true')
     p.add_argument('--config', type=Path)
     a = p.parse_args()
@@ -77,6 +78,19 @@ def main():
     settings = {'root': 'state', 'clients_file': 'clients.json', 'host': host, 'port': port}
     config.write_text(json.dumps(settings))
     endpoint = f'http://{host}:{port}'
+    container = None
+    if a.docker_image:
+        sys.path.insert(0, str(Path(__file__).absolute().parent))
+        from container_lifecycle import Container
+        host = '127.0.0.1'
+        with socket.socket() as sock:
+            sock.bind((host, 0))
+            port = sock.getsockname()[1]
+        endpoint = f'http://{host}:{port}'
+        settings = {'root': '/var/lib/atlas', 'clients_file': '/run/atlas/clients.json',
+                    'host': '0.0.0.0', 'port': 12088, 'container_endpoint': endpoint}
+        container = Container(a.docker_image, out, port, token, expected)
+        container.configure(settings)
     headers = {'Authorization': 'Bearer ' + token}
     checks = []
     def passed(name):
@@ -98,7 +112,7 @@ def main():
     log = (out / 'daemon.log').open('wb')
     process = None
     def start():
-        proc = subprocess.Popen(command, cwd=out, env=env, stdout=log, stderr=log)
+        proc = container.start() if container else subprocess.Popen(command, cwd=out, env=env, stdout=log, stderr=log)
         for _ in range(150):
             if proc.poll() is not None:
                 raise AssertionError('daemon exited; inspect ' + str(out / 'daemon.log'))
@@ -122,6 +136,9 @@ def main():
            'attribution': {'source': 'synthetic-owned'}}
     try:
         process = start()
+        if container:
+            container.verify()
+            passed('non-root installed image; normal bridge; host-loopback mapping; read-only root')
         status = ok('status')
         caps = ok('capabilities')
         schema_response = httpx.get(endpoint + '/v1/schema', headers=headers, trust_env=False)
@@ -138,6 +155,10 @@ def main():
                 assert r.status_code == 401, (route, r.status_code)
         for extra in ({'Host': 'evil.invalid'}, {'Origin': 'http://evil.invalid'}, {'Origin': 'null'}):
             assert httpx.get(endpoint + '/v1/schema', headers=headers | extra, trust_env=False).status_code == 403
+        assert httpx.get(endpoint + '/v1/schema', headers=headers | {'Origin': endpoint}, trust_env=False).status_code == 200
+        if container:
+            for extra in ({'Host': f'localhost:{port}'}, {'Host': '127.0.0.1:12088'}, {'Origin': 'http://127.0.0.1:12088'}):
+                assert httpx.get(endpoint + '/v1/schema', headers=headers | extra, trust_env=False).status_code == 403
         assert httpx.get(endpoint + '/', headers=headers, trust_env=False).status_code == 404
         passed('common auth gate; hostile Host/Origin refused; UI absent')
         assert ok('corpus.page', {'collection': 'tags'})['items'] == []
@@ -173,11 +194,14 @@ def main():
         assert invalid_http['error']['code'] == 'VALIDATION'
         assert op('corpus.put', put | {'body': {'changed': True}})['error']['code'] == 'IDEMPOTENCY_CONFLICT'
         passed('real MCP initialize/list/call; CLI/HTTP/MCP same intent, schemas and validation')
-        duplicate = subprocess.run([sys.executable, '-I', '-m', 'atlas_engine.server', '--config', str(config)], cwd=out, env=env, capture_output=True, text=True, timeout=20)
+        duplicate = (container.exec(['atlas', '--config', '/run/atlas/atlas.json']) if container else
+                     subprocess.run([sys.executable, '-I', '-m', 'atlas_engine.server', '--config', str(config)], cwd=out, env=env, capture_output=True, text=True, timeout=20))
         assert duplicate.returncode != 0 and 'STATE_BUSY' in duplicate.stderr
-        owner = subprocess.run([sys.executable, '-I', '-c',
+        owner_command = [sys.executable, '-I', '-c',
             'from pathlib import Path;from atlas_engine.corpus import Corpus;from atlas_engine.repository import Repository;import sys;Corpus(Path(sys.argv[1]),Repository(Path(sys.argv[2])))',
-            str(out / 'state/corpus'), str(out / 'second-ledger')], cwd=out, env=env, capture_output=True, text=True, timeout=20)
+            str(out / 'state/corpus'), str(out / 'second-ledger')]
+        owner = (container.exec(['python', '-I', '-c', owner_command[3], '/var/lib/atlas/corpus', '/tmp/second-ledger']) if container else
+                 subprocess.run(owner_command, cwd=out, env=env, capture_output=True, text=True, timeout=20))
         assert owner.returncode != 0 and 'another process owns' in owner.stderr
         passed('second daemon and independent Qdrant owner refused')
         assert op('catalog.list')['error']['code'] == 'INVOKE_UNCONFIGURED'
@@ -193,12 +217,24 @@ def main():
         passed('restart preserves bytes/history and replay does not duplicate revision')
         stop(process)
         process = None
-        for change, message in [({'host': '0.0.0.0'}, 'loopback'),
+        for change, message in [({'host': '0.0.0.0', 'container_endpoint': None}, 'loopback'),
+                                ({'host': '0.0.0.0', 'container_endpoint': 'http://evil.invalid:12088'}, 'container_endpoint requires'),
                                 ({'connections': [{'id': 'later', 'url': 'http://127.0.0.1:9', 'backend_generation': 'fixture', 'account_scope': 'fixture'}]}, 'binding changed')]:
             config.write_text(json.dumps(settings | change))
-            refused = subprocess.run([sys.executable, '-I', '-m', 'atlas_engine.server', '--config', str(config)], cwd=out, env=env, capture_output=True, text=True, timeout=20)
-            assert refused.returncode != 0 and message in refused.stderr, refused.stderr
+            if container:
+                container.configure(settings | change)
+                container.start()
+                for _ in range(150):
+                    if container.poll() is not None:
+                        break
+                    time.sleep(.1)
+                refused = subprocess.CompletedProcess([], container.poll(), '', container.run('logs', container.name).stderr)
+            else:
+                refused = subprocess.run([sys.executable, '-I', '-m', 'atlas_engine.server', '--config', str(config)], cwd=out, env=env, capture_output=True, text=True, timeout=20)
+            assert refused.returncode not in (None, 0) and message in refused.stderr, refused.stderr
         config.write_text(json.dumps(settings))
+        if container:
+            container.configure(settings)
         passed('non-loopback bind and changed persisted connection binding refused')
         executable = Path(sys.executable).parent / 'atlas'
         assert subprocess.run([str(executable), '--help'], cwd=out, env=env, capture_output=True).returncode == 0
@@ -209,19 +245,22 @@ def main():
         process = None
         passed('installed atlas entrypoint starts and reads the same durable corpus')
         assert not (out / 'forbidden-egress.log').exists()
-        passed('no non-loopback startup/operation egress under audit guard')
+        passed('normal Docker bridge; no external backend configured (no child egress audit)' if container else 'no non-loopback startup/operation egress under audit guard')
         report = {'status': 'pass', 'checks': checks, 'python': sys.version,
                   'package': importlib.metadata.version('atlas-engine'),
                   'modules': expected, 'operation_count': len(schemas),
                   'corpus_revision': stored['revision'], 'receipt': receipt,
                   'limits': ['Only exercised corpus operation/validation parity; not whole transport parity.',
-                             'No InvokeAI, inference, Docker, populated-corpus migration or restore acceptance.']}
+                             'No InvokeAI, inference, populated-corpus migration or restore acceptance.',
+                             'Docker accepted only when --docker-image is supplied; no live deployment.']}
         (out / 'result.json').write_text(json.dumps(report, ensure_ascii=False, indent=2) + '\n')
     finally:
         if process is not None and process.poll() is None:
             process.terminate()
             process.wait(timeout=20)
         log.close()
+        if container:
+            container.cleanup()
 
 
 if __name__ == '__main__':
