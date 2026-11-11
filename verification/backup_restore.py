@@ -11,6 +11,7 @@ from pathlib import Path
 import shutil
 import sqlite3
 import sys
+import subprocess
 import time
 from unittest.mock import patch
 
@@ -39,9 +40,22 @@ def raw_image(root):
 
 
 def main():
-    p=argparse.ArgumentParser(description=__doc__);p.add_argument('--out',type=Path,required=True);a=p.parse_args()
+    p=argparse.ArgumentParser(description=__doc__)
+    p.add_argument('--out',type=Path,required=True)
+    p.add_argument('--source-root',type=Path,default=Path(__file__).absolute().parents[1]/'atlas_engine',
+                   help='read-only source modules for installed-byte comparison')
+    p.add_argument('--cli',action='store_true',help='also exercise installed atlas-state executable')
+    a=p.parse_args()
     out=a.out.absolute();out.mkdir(parents=True,exist_ok=False,mode=0o700)
-    source=Path(__file__).absolute().parents[1]/'atlas_engine'
+    source=a.source_root
+    executable=Path(sys.executable).parent/'atlas-state'
+    def cli(*args, refused=False):
+        command=[str(executable),*map(str,args)]
+        result=subprocess.run(command,capture_output=True,text=True,timeout=60)
+        assert (result.returncode != 0) if refused else (result.returncode == 0), result.stderr
+        with (out/'cli.jsonl').open('a') as log:
+            log.write(json.dumps({'command':command,'returncode':result.returncode})+'\n')
+        return result
     installed=Path(atlas_engine.__file__).parent
     assert installed != source, 'must exercise installed package'
     assert {f.name:sha(f) for f in source.glob('*.py')} == {f.name:sha(f) for f in installed.glob('*.py')}
@@ -129,11 +143,13 @@ def main():
     media=root/'media';media.mkdir();(media/'manifest.json').write_text('{"source":"synthetic","opaque":true}')
     (media/'candidate-0.npy').write_bytes(b'synthetic prior bytes, not inference')
     refuse(lambda:backup(root,out/'busy-corpus'))
+    if a.cli:cli('backup',root,out/'cli-busy-corpus',refused=True)
     passed('active corpus owner refused')
     engine.close()
     with (root/'service.lock').open() as lock:
         fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
         refuse(lambda:backup(root,out/'busy-service'))
+        if a.cli:cli('backup',root,out/'cli-busy-service',refused=True)
     passed('same daemon service.lock refused')
     # Leave a committed operational WAL with a read-only open connection so it
     # cannot disappear on final writer close. Backup must include its event.
@@ -141,21 +157,33 @@ def main():
     writer.execute("insert into health values('wal-boundary','{\"synthetic\":true}')");writer.commit()
     before_sql=sql_image(root/'registry.sqlite3');before_raw=raw_image(root)
     before_files=files(root)
-    manifest=backup(root,out/'backup')
+    if a.cli:
+        cli('backup',root,out/'backup')
+        manifest=json.loads((out/'backup'/'manifest.json').read_text())
+    else:manifest=backup(root,out/'backup')
     interrupted_restore(out/'backup','interrupted')
     assert (out/'backup'/'state'/'clients-private.json').exists() is False
     assert manifest['configuration_secrets_included'] is False
-    restored=out/'restored';restore(out/'backup',restored)
+    restored=out/'restored'
+    if a.cli:cli('restore',out/'backup',restored)
+    else:restore(out/'backup',restored)
     assert {k:v for k,v in files(restored).items() if k not in ('restore-state.json','service.lock')}==manifest['files']
     assert raw_image(restored)==before_raw
     assert sql_image(restored/'registry.sqlite3')==before_sql
     assert points(restored)==manifest['collections']
-    assert files(root)==before_files, 'source changed during backup/restore'
+    after_files=files(root)
+    # A separate SQLite CLI reader may update transient WAL read marks in SHM.
+    # Require every durable byte (including the committed WAL) to stay exact.
+    changes={k for k in set(before_files)|set(after_files) if before_files.get(k)!=after_files.get(k)}
+    assert changes <= ({'registry.sqlite3-shm'} if a.cli else set()), ('source changed during backup/restore',changes)
+    assert sql_image(root/'registry.sqlite3')==before_sql
+    (out/'source-comparison.json').write_text(json.dumps({'changed_transient_files':sorted(changes),'durable_bytes_unchanged':True}))
     writer.close()
     assert (restored/'media'/'manifest.json').read_bytes()==(media/'manifest.json').read_bytes()
     assert (restored/'media'/'candidate-0.npy').read_bytes()==(media/'candidate-0.npy').read_bytes()
     assert storage_path(restored,str(path))==restored/'artifacts'/'blob'
     passed('exact five-collection raw point preimage and WAL ledger/BLOB/files/binding preservation')
+    if a.cli:passed('installed atlas-state backup/restore and shared service/corpus lock refusal')
     refuse(lambda:restore(out/'backup',restored));refuse(lambda:backup(root,out/'backup'))
     refuse(lambda:restore(out/'backup',out/'restored'/'..'/'traversal'))
     (out/'link').symlink_to(out/'backup',target_is_directory=True)

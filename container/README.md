@@ -92,7 +92,7 @@ The runner removes only its owned containers/network/volumes, including on failu
 ```sh
 /absolute/venv/bin/python -I -B verification/acceptance.py \
   --docker-image atlas-core:cpu-slice \
-  --wheel /absolute/path/to/atlas_engine-0.4.0.dev1-py3-none-any.whl \
+  --wheel /absolute/path/to/atlas_engine-0.4.0.dev6-py3-none-any.whl \
   --out /absolute/new/private-container-acceptance-directory
 ```
 
@@ -103,6 +103,45 @@ external backend is configured or invoked; unlike self-host mode, Docker mode do
 not install a Python child egress audit hook. The ordinary non-Docker acceptance
 continues to exercise that guard. This is core corpus acceptance, not a full legacy
 operation/backend, populated migration/restore, inference, release or SBOM review.
+
+## Populated offline backup/restore in the installed image
+
+The dev6 CPU image also passed the existing populated synthetic runner with
+`--cli`: the installed `atlas-state` executable performs the primary backup and
+restore, including refusal while the shared service/corpus locks are held. The
+same runner checks raw five-collection preimages, WAL/ledger/upload BLOBs,
+artifact/media bytes, interrupted restores, quarantine and bound reconciliation.
+No backend is supplied; network access is refused by the runner and Docker uses
+`--network none`. This is same-format synthetic restore, not legacy migration.
+
+From the repository root, choose NEW names and an existing private `RUN_DIR`
+outside source. Save the result before removing the exact owned resources:
+
+```sh
+NAME=atlas-offline-$(python3 -c 'import uuid;print(uuid.uuid4().hex[:12])')
+docker volume create "$NAME-state"
+docker create --name "$NAME" --network none \
+  --read-only --cap-drop ALL --security-opt no-new-privileges \
+  --memory 512m --cpus 1 --pids-limit 128 \
+  --tmpfs /tmp:rw,noexec,nosuid,size=32m \
+  -v "$NAME-state:/var/lib/atlas" -v "$PWD:/reference:ro" \
+  --entrypoint python atlas-core:cpu-slice \
+  -I -B /reference/verification/backup_restore.py \
+  --source-root /reference/atlas_engine --cli \
+  --out /var/lib/atlas/backup-check
+docker start -a "$NAME"
+docker inspect --format '{{.State.ExitCode}}' "$NAME" # must be 0
+docker cp "$NAME:/var/lib/atlas/backup-check" "$RUN_DIR/offline"
+docker rm "$NAME"
+docker volume rm "$NAME-state"
+```
+
+The source mount is read-only verification/reference input, not a source-package
+import or daemon entrypoint. `receipt.json`, `cli.jsonl` and
+`source-comparison.json` record checks, executable commands and source preservation.
+Separate CLI SQLite readers may change transient `registry.sqlite3-shm` read marks;
+all durable source bytes, including the WAL, and logical ledger must remain exact.
+Use `docker rm -f "$NAME"` and remove only its exact volume on a failed run too.
 
 To deliberately refresh dependency inputs (not needed to build):
 
