@@ -12,8 +12,10 @@ import shutil
 import sqlite3
 import sys
 import time
+from unittest.mock import patch
 
 import atlas_engine
+import atlas_engine.state_backup as state_backup
 from atlas_engine.corpus import COLLECTIONS, Corpus, entity_id, point_id
 from atlas_engine.engine import Engine
 from atlas_engine.repository import Repository, dump
@@ -52,6 +54,49 @@ def main():
         try:fn()
         except (ValueError,OSError):return
         raise AssertionError('expected refusal')
+    def interrupted_restore(sealed, label):
+        sealed_before=files(sealed)
+        for boundary in ('copied-registry', 'verify-preimage'):
+            partial=out/(label+'-'+boundary)
+            copyfile=shutil.copyfile
+            inventory=state_backup.files
+            injected=[]
+            def fail_copy(src,dst,*args,**kwargs):
+                result=copyfile(src,dst,*args,**kwargs)
+                if Path(dst)==partial/'registry.sqlite3':
+                    assert (partial/'corpus'/'corpus.json').is_file()
+                    injected.append(boundary)
+                    raise OSError('injected interruption after registry/corpus copy')
+                return result
+            def fail_verify(root):
+                if root==partial:
+                    injected.append(boundary)
+                    raise OSError('injected interruption before preimage verification')
+                return inventory(root)
+            target='shutil.copyfile' if boundary=='copied-registry' else 'atlas_engine.state_backup.files'
+            with patch(target,fail_copy if boundary=='copied-registry' else fail_verify):
+                refuse(lambda:restore(sealed,partial))
+            assert injected==[boundary]
+            marker=json.loads((partial/'restore-state.json').read_text())
+            assert marker['reconciled'] is False and marker['preimage_verified'] is False
+            assert marker['storage_target_root']==str(partial)
+            assert marker['backup_manifest_sha256']==sha(sealed/'manifest.json')
+            prior=sealed/'state'/'restore-state.json'
+            assert marker['previous_restore']==(json.loads(prior.read_text()) if prior.exists() else None)
+            ledger=sql_image(partial/'registry.sqlite3')
+            # Construction must reject before recovery, enqueue or ACK; the
+            # process-wide socket audit and NoBackend guard external access too.
+            try:
+                candidate=Engine(partial,None,NoBackend(),NoBackend(),True,corpus_root=partial/'corpus')
+            except ValueError as e:
+                assert 'incomplete restore' in str(e)
+            else:
+                try:
+                    candidate.start()
+                    raise AssertionError('incomplete restore admitted Engine startup')
+                finally:candidate.close()
+            assert sql_image(partial/'registry.sqlite3')==ledger
+            assert files(sealed)==sealed_before
     root=out/'original';root.mkdir();(root/'service.lock').touch()
     engine=Engine(root,None,NoBackend(),NoBackend(),True,corpus_root=root/'corpus')
     (root/'connection-binding.json').write_text(dump({'id':'synthetic','url':'http://127.0.0.1:9','backend_generation':'fixture','account_scope':'test'}))
@@ -97,9 +142,11 @@ def main():
     before_sql=sql_image(root/'registry.sqlite3');before_raw=raw_image(root)
     before_files=files(root)
     manifest=backup(root,out/'backup')
+    interrupted_restore(out/'backup','interrupted')
     assert (out/'backup'/'state'/'clients-private.json').exists() is False
     assert manifest['configuration_secrets_included'] is False
     restored=out/'restored';restore(out/'backup',restored)
+    assert {k:v for k,v in files(restored).items() if k not in ('restore-state.json','service.lock')}==manifest['files']
     assert raw_image(restored)==before_raw
     assert sql_image(restored/'registry.sqlite3')==before_sql
     assert points(restored)==manifest['collections']
@@ -157,11 +204,16 @@ def main():
     assert not engine.restore_quarantined
     engine.close()  # Do not start activated core against any backend.
     backup(restored,out/'second-backup')
+    interrupted_restore(out/'second-backup','interrupted-repeat')
     chained=out/'second-restore';chained_state=restore(out/'second-backup',chained)
     assert not chained_state['reconciled']
     assert chained_state['previous_restore']['reconciliation_report']==state['reconciliation_report']
     assert storage_path(chained,str(path))==chained/'artifacts'/'blob'
     assert raw_image(chained)==raw_image(restored)
+    expected=files(out/'second-backup'/'state')
+    assert {k:v for k,v in files(chained).items() if k not in ('restore-state.json','service.lock')}=={
+        k:v for k,v in expected.items() if k!='restore-state.json'}
+    passed('interrupted first/repeated restores reject startup before recovery/enqueue/ACK')
     passed('explicit bound reconciliation required; uncertain job prevents activation')
     receipt={'checks':checks,'synthetic':True,'legacy_corpus_migration':False,'native_execution':False,
              'installed_package':str(installed),'collections':manifest['collections'],'network_connections':0}

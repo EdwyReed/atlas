@@ -249,27 +249,39 @@ def validate_backup(source):
 def restore(source, destination):
     source, destination = new_target(source, destination)
     manifest = validate_backup(source)
-    shutil.copytree(source / 'state', destination)
-    destination.chmod(0o700)
-    if files(destination) != manifest['files']:
-        raise ValueError('restored preimage differs')
-    # Preserve prior location maps across a backup of an already restored root.
-    prior = destination / MARKER
+    # Read old provenance from the validated payload, never copy its potentially
+    # reconciled marker over the quarantine bound to this new destination.
+    payload = source / 'state'
+    previous = json.loads((payload / MARKER).read_text()) if MARKER in manifest['files'] else None
     roots = [manifest['source_root']]
-    previous = None
-    if prior.exists():
-        previous = json.loads(prior.read_text())
+    if previous:
         roots += previous.get('storage_source_roots', [])
-        prior.unlink()
-    write_json(prior, {'format': 'atlas-restored-state-v1', 'reconciled': False,
-                      'backup_manifest_sha256': sha(source / 'manifest.json'),
-                      'storage_source_roots': sorted(set(roots)),
-                      'storage_target_root': str(destination),
-                      'previous_restore': previous,
-                      'preimage_verified': True})
+    state = {'format': 'atlas-restored-state-v1', 'reconciled': False,
+             'backup_manifest_sha256': sha(source / 'manifest.json'),
+             'storage_source_roots': sorted(set(roots)),
+             'storage_target_root': str(destination),
+             'previous_restore': previous, 'preimage_verified': False}
+    destination.mkdir(mode=0o700)
+    write_json(destination / MARKER, state)
+    # Persist the file and directory binding BEFORE any journal bytes arrive.
+    sync_tree(destination)
+    for src in sorted(payload.iterdir()):
+        if src.name == MARKER:
+            continue
+        dest = destination / src.name
+        if src.is_dir(): shutil.copytree(src, dest)
+        else: shutil.copyfile(src, dest)
+    if {k: v for k, v in files(destination).items() if k != MARKER} != {
+            k: v for k, v in manifest['files'].items() if k != MARKER}:
+        raise ValueError('restored preimage differs')
     (destination / 'service.lock').touch(mode=0o600, exist_ok=False)
     sync_tree(destination)
-    return json.loads(prior.read_text())
+    state['preimage_verified'] = True
+    temp = destination / 'restore-state.new'
+    write_json(temp, state)
+    temp.replace(destination / MARKER)
+    sync_tree(destination)
+    return state
 
 
 def restore_state(root):
@@ -278,6 +290,8 @@ def restore_state(root):
     state = json.loads(path.read_text())
     if state.get('format') != 'atlas-restored-state-v1' or state.get('storage_target_root') != str(Path(root)):
         raise ValueError('invalid or moved restore marker; restore through atlas-state')
+    if state.get('preimage_verified') is False:
+        raise ValueError('incomplete restore; restore backup to a new destination')
     return state
 
 

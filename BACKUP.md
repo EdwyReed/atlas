@@ -20,9 +20,15 @@ payloads; they are NOT sanitized public artifacts. Config secrets are not read.
 
 `atlas-state restore BACKUP NEW_ROOT` refuses existing targets, overlap, symlinks,
 nonregular entries, traversal, case-fold collisions, integrity/version mismatch.
-Incomplete writes have no manifest and cannot restore; use a new destination.
+Incomplete backups have no manifest and cannot restore; use a new destination.
 Source/backup remain untouched. There is no destructive overwrite or merge.
-Exact file hashes and SQLite logical state are verified before any Engine open.
+Restore durably binds a new unreconciled marker before copying any journal bytes;
+the payload's previous marker is retained as provenance, never copied over it.
+An interrupted copy/verification remains marked incomplete and rejects Engine
+construction and reconciliation. Retry into a new root, not the partial one.
+Only after exact preimage verification and payload fsync is the marker atomically
+completed (still quarantined). Exact file hashes exclude this managed marker;
+SQLite logical state and all other payload bytes are preserved before Engine open.
 
 Storage relocation is explicit in restore-state.json: old-root-relative artifact
 and media prior references resolve under the new root at use time; persisted
