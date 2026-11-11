@@ -1,5 +1,17 @@
 # Atlas — headless standalone
 
+## Optional CPU censor — dev8 contract
+
+One Engine-owned media thread executes newly admitted censor work from the existing jobs ledger, with one shared mask/censor slot and no new database or scheduler. `censor.process` durably captures validated input bytes/digests before returning queued; `censor.get`, jobs/events/artifact reads and core operations never take the inference lock. Exact replay returns the existing receipt even while busy. Restart marks queued/running media INTERRUPTED and never blindly executes it again. Graceful stop terminates/reaps the owned CPU child within a bound. Public cancellation remains unsupported. Existing mask inputs and synchronous execution remain compatible; actual mask inference is not claimed.
+
+Acceptance: installed authenticated HTTP and SDK MCP upload→submit→poll→real NTD11 CPU artifact read/hash/dimensions→replay/restart on safe synthetic pixels. A separately labelled slow child fixture proves prompt acceptance, independent polling, capacity and bounded stop/timeout. Keep CPU/RSS/storage limits and restored-root quarantine; no live changes, model downloads, GPU, corpus imports or Docker rebuild. External model/runtime/source are operator-supplied read-only paths, relative to media_config_file when not absolute.
+
+### dev8 observed acceptance
+
+Installed wheel on isolated project Python 3.14; NTD11 subprocess uses the existing external Python/torch CPU environment. Complete source/wheel/installed module names and bytes match. `verification/media_portable.py` exercises authenticated HTTP upload and admission, running/success, actual NTD11 CPU inference and verified original-byte artifact/manifest delivery, SDK MCP new admission/replay/artifact reads, conflicts and restart retention. Model SHA-256 is measured by the worker before loading and checked again after inference. The inspected safe 320×240 geometric image has no detections: execution is accepted, detector quality and detected-region rendering are not. The separate slow-child stand-in proves prompt acceptance, independent polling/core reads, one-slot refusal, deadline, bounded stop/reap, abrupt-owner-death termination and interrupted no-replay. This is not model performance evidence.
+
+`verification/media_regressions.py` checks unchanged mask setup/points/box/options/synchronous result/job-prior/artifacts via an explicitly labelled subordinate stand-in; actual mask inference remains unaccepted. It also checks queued snapshot/recovery, capacity/storage admission and restored-root suppression. Installed core HTTP/MCP/CLI/auth/ownership/restart, native typed-result/artifact regression, and populated offline backup/restore/quarantine runners passed. A separately retained real-worker health probe with a one-byte RSS budget exits RESOURCE_LIMIT. Private evidence lives outside the release under atlas-studio/planning/implementation/media-portable. No live configuration, corpus, donor environment, source or weights were changed. No Docker rebuild; container remains dev6.
+
 ## Populated creative slice — implementation contract
 
 Use one installed-package runner over authenticated HTTP and SDK MCP, a new private root, a compatible user-supplied vocabulary or an explicitly synthetic populated graph, and synthetic canonical/knowledge records. No live corpus, downloads, model encoding, InvokeAI or GPU. Bounded discovery of older creative evidence found references to the live Danbooru database, not a sealed compatible vocabulary snapshot; do not open that source. This acceptance uses synthetic data, not real-vocabulary or migration acceptance.
@@ -17,7 +29,7 @@ This slice must demonstrate authenticated HTTP status/capabilities/input schemas
 
 ## Implementation boundary
 
-- Package `atlas-engine` 0.4.0.dev7; executable `atlas` (alias `atlas-engine`), `atlas-client` and offline `atlas-state`.
+- Package `atlas-engine` 0.4.0.dev8; executable `atlas` (alias `atlas-engine`), `atlas-client` and offline `atlas-state`.
 - Configuration is explicit JSON, paths relative to its directory. Defaults → config → explicit `--root/--host/--port`. No environment configuration, `.env` discovery or Hermes imports. Secret references are private files. No embedded plaintext InvokeAI token field.
 - Loopback IP bind by default; explicit container mode binds 0.0.0.0 only with an exact `container_endpoint` of `http://127.0.0.1:HOST_PORT`. Container Host/Origin allowlists contain only that endpoint; Docker publication MUST bind host 127.0.0.1. One process; no Uvicorn workers or reload. Every HTTP path, including MCP and unknown artifact paths, passes the same bearer/Host/Origin gate. Old public UI is not mounted or shipped.
 - Corpus is `root/corpus`; ledger/artifacts/cache belong to `root`. Existing lifetime locks and corpus revision CAS are reused. This is not distributed Qdrant CAS.
@@ -41,7 +53,7 @@ This slice must demonstrate authenticated HTTP status/capabilities/input schemas
 | Generation/batch/queue/observation/cancel | Scoped durable admission and GET-receipt recovery implemented on existing generation path; isolated native queue admission/cancel exercised with fixture graph codec. No native graph execution or GPU family acceptance |
 | Boards/images/uploads/artifact fetch/publish | Retained; no native write or artifact transfer run |
 | Inpaint/upscale/refinement and concrete graphs | Existing recipe mechanisms retained; GPU/mask polarity/lineage acceptance pending; refinement coverage not established |
-| Mask/censor/media workers | Retained and configurable, off without bindings; packaged CPU inference/early async admission/polling acceptance pending |
+| Mask/censor/media workers | dev8 installed censor: real NTD11 CPU synthetic no-detection inference, durable async admission, independent polling and verified HTTP/MCP artifacts/replay/restart. Mask synchronous contract retained; actual mask inference unaccepted |
 | Native projects/workspace CAS/codecs and callable saved workflows | Narrow split-v4 generate-widget prompt codec implemented and fixture-tested; isolated pinned native router/service/SQLite smoke exercised. Full native server/auth, other codecs and callable saved workflows not accepted |
 | Full Canvas/compiler and native image-map semantic search | Not delivered; concrete versioned subsets/negotiated adapters remain target work |
 | Backup/restore/history/bytes/provenance/migration | Same-format offline backup→new-root restore implemented; populated synthetic five-collection raw preimage/history/evidence/tombstone/bytes and quarantine/reconciliation exercised. Full retained private legacy corpus migration NOT accepted; see BACKUP.md |

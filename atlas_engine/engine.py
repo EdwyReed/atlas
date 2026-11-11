@@ -53,7 +53,7 @@ class Engine:
         # Restored journals cannot authorize stale external effects. Keep reads
         # available, but do not run recovery, receipt ACKs, workers or events.
         if self.restore_quarantined:return
-        if any(w and w.is_alive() for w in (self.thread,getattr(self,'cpu_thread',None),getattr(self,'delivery_thread',None),getattr(self,'acquisition_thread',None))):raise Fault('ALREADY_RUNNING','engine worker already running')
+        if any(w and w.is_alive() for w in (self.thread,getattr(self,'media_thread',None),getattr(self,'cpu_thread',None),getattr(self,'delivery_thread',None),getattr(self,'acquisition_thread',None))):raise Fault('ALREADY_RUNNING','engine worker already running')
         self.stop.clear();self.projection_cursor=''
         self.workspace.recover()
         self.acquisition.recover()
@@ -72,12 +72,14 @@ class Engine:
         self.thread=threading.Thread(target=self.loop,name='atlas-observer',daemon=True)
         self.delivery_thread=threading.Thread(target=self.delivery_loop,name='atlas-delivery',daemon=True)
         self.acquisition_thread=threading.Thread(target=self.acquisition.loop,name='atlas-acquisition',daemon=True)
+        self.media_thread=threading.Thread(target=self.media.loop,name='atlas-media',daemon=True)
+        self.media_thread.start()
         self.thread.start();self.cpu_thread.start();self.delivery_thread.start();self.acquisition_thread.start()
         if self.native_events:self.native_events.start()
     def close(self):
         self.stop.set();self.wake.set()
         if self.native_events:self.native_events.close()
-        for worker in (self.thread,getattr(self,'cpu_thread',None),getattr(self,'delivery_thread',None),getattr(self,'acquisition_thread',None)):
+        for worker in (self.thread,getattr(self,'media_thread',None),getattr(self,'cpu_thread',None),getattr(self,'delivery_thread',None),getattr(self,'acquisition_thread',None)):
             if worker:worker.join(timeout=35)
             if worker and worker.is_alive():raise Fault('SHUTDOWN_TIMEOUT','worker did not stop; resources remain open')
         if self.projection:self.projection.close()

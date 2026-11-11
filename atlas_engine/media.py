@@ -2,7 +2,7 @@
 SAM's accepted worker is subordinate inference/cache only, never a second product API.
 All file paths originate from operator config or Engine-owned immutable snapshots.
 """
-import fcntl,hashlib,importlib.util,io,json,os,subprocess,sys,threading,uuid
+import fcntl,hashlib,importlib.util,io,json,os,signal,subprocess,sys,threading,time,uuid
 from pathlib import Path
 from PIL import Image
 from .contracts import Fault
@@ -15,7 +15,27 @@ class Media:
         self.root=self.repo.root/'media';self.lock=threading.Lock();self.mask_client=None
         if self.config:self.root.mkdir(exist_ok=True,mode=0o700)
     def capabilities(self):
-        return {k:{'enabled':bool(self.config.get(k)), 'optional':True,'automatic':False} for k in ('mask','censor')}
+        return {k:{'enabled':bool(self.config.get(k)), 'optional':True,'automatic':False,'admission':'durable_async_one_slot' if k=='censor' else 'synchronous','cancellation':'unsupported','restart':'interrupted_no_replay'} for k in ('mask','censor')}
+    def loop(self):
+        while not self.engine.stop.is_set():
+            try:
+                with self.lock:
+                    for job in self.repo.page('censor',{'queued'},limit=1):
+                        if self.engine.stop.is_set():break
+                        with (self.root/'dispatch.lock').open('a') as lock:
+                            fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+                            self.execute(job,Path(job['media_folder']))
+            except Exception as exc:
+                self.repo.health('media_worker',{'ok':False,'error':type(exc).__name__})
+            self.engine.stop.wait(.1)
+        self.recover()
+    @staticmethod
+    def durable(path,raw):
+        with path.open('xb') as f:
+            f.write(raw);f.flush();os.fsync(f.fileno())
+        fd=os.open(path.parent,os.O_DIRECTORY)
+        try:os.fsync(fd)
+        finally:os.close(fd)
     def recover(self):
         for kind in ('censor','mask'):
             for job in self.repo.iter_jobs(kind,{'queued','running'}):
@@ -62,17 +82,33 @@ class Media:
         if not all(Path(config[k]).is_file() for k in ('python','model')) or not (Path(config['upstream'])/'mosaic.py').is_file():raise Fault('UNAVAILABLE','configured shared NTD11 installation incomplete')
         env={k:v for k,v in os.environ.items() if k not in ('PYTHONPATH','PYTHONHOME','VIRTUAL_ENV')}
         # No GPU/network model fallback, even with a managed parent environment.
-        env.update(CUDA_VISIBLE_DEVICES='',HF_HUB_OFFLINE='1',YOLO_OFFLINE='true',YOLO_CONFIG_DIR=str(self.root/'yolo-config'))
-        spec={**spec,'upstream':config['upstream'],'model':config['model'],'result_file':str(folder/'result.json')}
+        env.update(CUDA_VISIBLE_DEVICES='',HF_HUB_OFFLINE='1',YOLO_OFFLINE='true',YOLO_AUTOINSTALL='false',YOLO_CONFIG_DIR=str(self.root/'yolo-config'))
+        spec={**spec,'upstream':config['upstream'],'model':config['model'],'result_file':str(folder/'result.json'),'max_rss_bytes':config.get('max_rss_bytes',3*1024**3),'parent_pid':os.getpid()}
         (folder/'request.json').write_text(dump(spec))
         try:
             with (folder/'worker.log').open('wb') as log:
-                run=subprocess.run([config['python'],'-I','-B',str(Path(__file__).with_name('censor_worker.py')),str(folder/'request.json')],env=env,stdin=subprocess.DEVNULL,stdout=log,stderr=log,timeout=config.get('timeout_seconds',1800),close_fds=True)
+                run=subprocess.Popen([config['python'],'-I','-B',str(Path(__file__).with_name('censor_worker.py')),str(folder/'request.json')],env=env,stdin=subprocess.DEVNULL,stdout=log,stderr=log,close_fds=True,start_new_session=True)
+                deadline=time.monotonic()+config.get('timeout_seconds',1800)
+                try:
+                    while run.poll() is None:
+                        if self.engine.stop.is_set():raise Fault('INTERRUPTED','Engine stopped; no automatic replay')
+                        if time.monotonic()>=deadline:raise Fault('TIMEOUT','NTD11 CPU deadline exceeded; no automatic replay')
+                        self.engine.stop.wait(.05)
+                finally:
+                    if run.poll() is None:
+                        os.killpg(run.pid,signal.SIGTERM)
+                        try:run.wait(timeout=2)
+                        except subprocess.TimeoutExpired:
+                            os.killpg(run.pid,signal.SIGKILL);run.wait(timeout=2)
             if run.returncode:raise Fault('RESOURCE_LIMIT' if run.returncode==72 else 'INFERENCE_FAILED','NTD11 CPU worker exited; inspect operator-owned worker.log')
         except subprocess.TimeoutExpired:raise Fault('TIMEOUT','NTD11 CPU deadline exceeded; no automatic replay')
         return json.loads((folder/'result.json').read_text())
     def artifact(self,jid,name,path,mime='application/octet-stream'):
-        raw=path.read_bytes()
+        with path.open('rb') as f:
+            raw=f.read();os.fsync(f.fileno())
+        fd=os.open(path.parent,os.O_DIRECTORY)
+        try:os.fsync(fd)
+        finally:os.close(fd)
         if len(raw)>64*1024*1024:raise Fault('RESOURCE_LIMIT','output byte budget exceeded')
         aid=str(uuid.uuid5(uuid.NAMESPACE_URL,'atlas-media:'+jid+':'+name))
         data={'artifact_id':aid,'job_id':jid,'image_name':name,'sha256':hashlib.sha256(raw).hexdigest(),'size':len(raw),'mime':mime,'embedding_state':'disabled'}
@@ -90,9 +126,19 @@ class Media:
                 return self.engine.uploads.chunk(p,principal)
             return self.finalize(p,principal)
         kind,action=op.split('.');self.enabled(kind)
+        if action=='get':return self.result_job(p['job_id'],principal,kind)
+        if action in ('process','segment'):
+            old=self.repo.request(principal,p['request_id'],kind,p)
+            if old:return old
         # One bounded media dispatch at a time; no competing queue or unbounded threads.
         if not self.lock.acquire(blocking=False):raise Fault('CAPACITY','media CPU request in flight; retry explicitly')
         try:
+            if self.engine.stop.is_set():raise Fault('STOPPING','Engine is stopping')
+            if action in ('process','segment'):
+                old=self.repo.request(principal,p['request_id'],kind,p)
+                if old:return old
+            if any(self.repo.page(k,{'queued','running'},limit=1) for k in ('mask','censor')):
+                raise Fault('CAPACITY','media CPU slot occupied; retry explicitly')
             with (self.root/'dispatch.lock').open('a') as lock:
                 try:fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
                 except BlockingIOError:raise Fault('CAPACITY','media CPU owner busy')
@@ -164,18 +210,33 @@ class Media:
                 (directory/f'candidate-{idx}.npy').write_bytes(logits)
                 # Accepted SAM core additionally checks model/image/dimensions/float32 shape.
                 prior={'manifest_path':str(directory/'manifest.json'),'candidate':idx}
+        if kind=='censor':
+            # Seal bytes and directory entries before publishing the queued intent.
+            folder=self.root/uuid.uuid4().hex;folder.mkdir(mode=0o700)
+            src=folder/'input';src.mkdir();entries=[]
+            for name,raw,sha in images:
+                path=src/name;self.durable(path,raw)
+                entries.append({'name':name,'path':str(path),'sha256':sha})
+            self.durable(folder/'inputs.json',(dump(entries)+'\n').encode())
+            fd=os.open(self.root,os.O_DIRECTORY)
+            try:os.fsync(fd)
+            finally:os.close(fd)
+            job,_=self.repo.reserve(principal,source,p['request_id'],kind,p,
+                {'media_folder':str(folder),'media_inputs':entries,'provenance':'engine_upload_snapshot'})
+            return job
         job,created=self.repo.reserve(principal,source,p['request_id'],kind,p)
         if not created:return job
         jid=job['id'];folder=self.root/jid;folder.mkdir(mode=0o700)
-        self.repo.update(jid,'running',expected={'queued'},event='media.started')
+        return self.execute(job,folder,prior)
+    def execute(self,job,folder,prior=None):
+        jid=job['id'];kind=job['kind'];p=job['payload'];principal=job['owner_principal']
+        _,claimed=self.repo.update(jid,'running',expected={'queued'},event='media.started')
+        if not claimed:return self.repo.get(jid)
         try:
             artifacts=[]
             if kind=='censor':
-                src=folder/'input';out=folder/'output';src.mkdir();out.mkdir();entries=[]
-                for name,raw,sha in images:
-                    path=src/name;path.write_bytes(raw);entries.append({'name':name,'path':str(path),'sha256':sha})
+                out=folder/'output';out.mkdir();entries=job['media_inputs']
                 result=self.censor_call({'action':'process','images':entries,'output_dir':str(out),'options':{k:v for k,v in p.items() if k not in ('request_id','images')}},folder)
-                result['model_sha256']=hashlib.sha256(Path(self.config['censor']['model']).read_bytes()).hexdigest()
                 for row in result['items']:
                     if row['status']!='error':artifacts.append(self.artifact(jid,row['name'],out/row['name'],'image/'+('jpeg' if Path(row['name']).suffix.lower() in ('.jpg','.jpeg') else Path(row['name']).suffix.lower()[1:])))
                 manifest=out/'manifest.json';manifest.write_text(dump(result)+'\n')

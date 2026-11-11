@@ -8,6 +8,11 @@ def sha(raw): return hashlib.sha256(raw).hexdigest()
 
 def main():
     spec=json.loads(Path(sys.argv[1]).read_text())
+    # Linux owner death must not leave an inference child competing after restart.
+    import ctypes,signal
+    if ctypes.CDLL(None,use_errno=True).prctl(1,signal.SIGKILL,0,0,0)!=0:
+        raise RuntimeError('cannot bind worker lifetime to Engine')
+    if os.getppid()!=spec['parent_pid']:raise RuntimeError('Engine owner already stopped')
     for k in ('OMP_NUM_THREADS','MKL_NUM_THREADS','OPENBLAS_NUM_THREADS','NUMEXPR_NUM_THREADS'):
         os.environ[k]='2'
     os.environ.update(CUDA_VISIBLE_DEVICES='',HF_HUB_OFFLINE='1',YOLO_OFFLINE='true')
@@ -28,6 +33,7 @@ def main():
     if spec['action']=='health':
         result={'ok':True,'cpu_only':True,'renderer_import_ok':True,'torch':torch.__version__}
     else:
+        model_sha256=sha(Path(spec['model']).read_bytes())
         model=YOLO(spec['model'])
         opts=spec['options'];labels={'pussy','penis'}
         if opts['include_nipple']:labels.add('nipples')
@@ -66,7 +72,8 @@ def main():
                 row.update(status='error',error={'code':'IMAGE_PROCESS','message':type(e).__name__+': '+str(e)[:200]})
             rows.append(row)
         counts={s:sum(r['status']==s for r in rows) for s in ('censored','undetected','error')}
-        result={'ok':counts['error']==0,'detector':'ntd11','device':'cpu','inference_images':len(rows),'items':rows,'counts':counts,'options':opts}
+        if sha(Path(spec['model']).read_bytes())!=model_sha256:raise RuntimeError('model bytes changed during inference')
+        result={'ok':counts['error']==0,'detector':'ntd11','device':'cpu','model_sha256':model_sha256,'renderer_sha256':sha((Path(spec['upstream'])/'mosaic.py').read_bytes()),'inference_images':len(rows),'items':rows,'counts':counts,'options':opts}
     Path(spec['result_file']).write_text(json.dumps(result,sort_keys=True,allow_nan=False)+'\n')
 
 if __name__=='__main__':main()

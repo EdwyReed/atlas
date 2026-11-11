@@ -1,6 +1,6 @@
 # Atlas
 
-Standalone headless Atlas, development package 0.4.0.dev7. The canonical corpus is embedded Qdrant; operational state is SQLite. HTTP, Streamable HTTP MCP and a thin CLI share the existing Engine dispatch. Hermes and InvokeAI are optional clients/backend integrations, not startup dependencies.
+Standalone headless Atlas, development package 0.4.0.dev8. The canonical corpus is embedded Qdrant; operational state is SQLite. HTTP, Streamable HTTP MCP and a thin CLI share the existing Engine dispatch. Hermes and InvokeAI are optional clients/backend integrations, not startup dependencies.
 
 This is a development package, not completion of the full Atlas product. See [SPEC.md](SPEC.md) and [OPERATIONS.json](OPERATIONS.json) for retained capabilities and exercised scope. No UI is delivered.
 
@@ -73,6 +73,38 @@ Put it in `connections` before the first start of a NEW state root. The binding 
 
 For local semantic encoding, install `atlas-engine[semantic]` from this source and provide compatible local-only weights under `state/cache/fastembed`. Startup never installs or downloads models. Missing vocabulary, InvokeAI, references or media bindings produce explicit unavailable/disabled results while the corpus remains usable. Merely listing an operation does not certify an optional backend or an inference result.
 
+## Optional standalone CPU censor
+
+Set `"media_config_file":"media.json"` in atlas.json. This optional module needs a separately provisioned, trusted NTD11 Python environment, existing model and anime-mosaic renderer; none are bundled or downloaded by Atlas. No Hermes configuration or service is needed. Example operator-owned media.json:
+
+```json
+{"censor":{"python":"/opt/ntd11/venv/bin/python","upstream":"/opt/ntd11/anime-mosaic","model":"/opt/ntd11/models/ntd11_anime_nsfw_segm_v5.pt","timeout_seconds":1800,"max_rss_bytes":3221225472},"max_storage_bytes":2147483648}
+```
+
+Relative inner paths belong to media.json's directory, not the current working directory. Preserve the Python launcher path (do not resolve a venv symlink to system Python). The exercised external environment uses torch 2.5.1+cpu, ultralytics 8.4.153 and numpy 1.26.4; use an independent environment for dependency changes. Trusted renderer/model source, licenses and provisioning are operator responsibilities. Existing resources are read-only; model weights and upstream source do not belong in this repository. Linux is required for owned-child lifetime binding. No Windows media acceptance is claimed.
+
+Use the same authenticated HTTP operations or MCP tools:
+
+1. `media.upload.begin`: request_id, size, sha256, role=`image`.
+2. `media.upload.chunk`: returned upload_id, contiguous offset, base64 (at most 32768 decoded bytes per chunk).
+3. `media.upload.finalize`: upload_id; verifies digest and single-image decode.
+4. `censor.process`: `{"request_id":"censor-1","images":[{"upload_id":"RETURNED_UPLOAD_ID","name":"safe.png"}],"mode":"mosaic"}`. Returns a durable **queued** receipt, not completed inference.
+5. `censor.get`: job_id. Inspect job state/error/result; the operation envelope alone is not success. `jobs.events` is also available.
+6. `artifact.list`: job_id; `artifact.read`: artifact_id, offset, size. Decode base64 and check SHA-256 against the artifact receipt. The manifest records input/output digests, dimensions, options, detections and model/renderer hashes.
+
+One shared media slot includes queued/running censor and synchronous mask operations. Another new intent receives CAPACITY; there is no hidden backlog. Exact replay reads the original job even while inference occupies the slot. Polling, events, artifacts and core reads do not take that lock; the existing numerical creative worker remains separate. Normal stop terminates/reaps the owned child; abrupt owner death kills it on Linux. Restart marks queued/running media failed with INTERRUPTED and never silently reruns; use a new request_id only for an explicit new attempt. Public media cancellation is unsupported. Historical completed artifacts/prior manifests and mask schemas remain available. Actual mask inference is not part of this slice.
+
+Existing byte/pixel/batch/storage limits and CPU thread/RSS/deadline caps remain. Admission reserves 520 MiB of output headroom against the 2 GiB default media budget; cleanup is operator-controlled. Offline flags and disabled dependency autoinstall are not a general OS network sandbox. Back up only after stopping/draining the Engine, using the existing shared-lock offline backup command; restored-root quarantine still blocks dispatch/workers until reconciliation. See [BACKUP.md](BACKUP.md).
+
+```sh
+/absolute/atlas-venv/bin/python -I -B verification/media_portable.py \
+  --out /new/private/media-evidence \
+  --python /absolute/ntd11/venv/bin/python \
+  --upstream /absolute/anime-mosaic --model /absolute/ntd11.pt
+```
+
+The installed dev8 runner exercised real CPU inference on safe synthetic pixels without detections, original-byte preservation, HTTP/MCP artifact/hash/dimensions and restart/replay. It separately labels its slow-child fixture for latency/capacity/timeout/stop/crash checks. Synthetic no-detection input proves execution, not detector quality or detected-region rendering. No live service, GPU job or model download was used. Source, wheel and installed Python module sets/bytes must match before acceptance. Docker remains dev6, without dev7/dev8 changes.
+
 ## Native workspace prompt subset
 
 The registry currently has 113 operations (counted from the shared input schemas). Listing an operation does not certify its backend; `OPERATIONS.json` records the exercised boundary.
@@ -134,7 +166,7 @@ This narrow installed regression uses synthetic DTOs and PNG bytes; it is not im
 
 [Build and isolated bridge run](container/README.md) documents the non-root CPU image, private mounted configuration, writable state volume and repeatable `--docker-image` boundary acceptance. Its base digest and hashed dependency inputs are pinned independently of the package version ranges. HTTP, real MCP and the installed host CLI were exercised against the built image on clean volumes, including auth negatives, duplicate ownership refusal and restart persistence.
 
-The retained CPU Docker image is 0.4.0.dev6 and does not contain the dev7 typed-result delta; no image rebuild was performed for dev7. It was rebuilt and accepted for dev6: installed source/wheel/image module equality, real HTTP/MCP/host CLI, owner refusal and restart persistence. The installed `atlas-state` executable also completed populated synthetic offline backup→new-root restore inside the non-root read-only image with networking disabled, exact durable bytes/inventory comparison, shared-lock refusal and quarantine/reconciliation checks; see [BACKUP.md](BACKUP.md). Full legacy migration, full native server execution, GPU jobs and packaged media inference remain unaccepted. Source licensing/third-party redistribution, SBOM and release provenance still need release review before publication. No live deployment or public service is part of this delivery.
+The retained CPU Docker image is 0.4.0.dev6 and does not contain the dev7 typed-result or dev8 media delta; neither delta rebuilt the image. It was rebuilt and accepted for dev6: installed source/wheel/image module equality, real HTTP/MCP/host CLI, owner refusal and restart persistence. The installed `atlas-state` executable also completed populated synthetic offline backup→new-root restore inside the non-root read-only image with networking disabled, exact durable bytes/inventory comparison, shared-lock refusal and quarantine/reconciliation checks; see [BACKUP.md](BACKUP.md). Full legacy migration, full native server execution, GPU jobs and container media inference remain unaccepted (installed host censor acceptance is documented above). Source licensing/third-party redistribution, SBOM and release provenance still need release review before publication. No live deployment or public service is part of this delivery.
 
 ## Populated literal search and numerical creative discovery
 

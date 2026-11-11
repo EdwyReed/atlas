@@ -124,6 +124,11 @@ def main():
         else:
             atlas=Atlas(config.reference_url,token=secret(config.reference_token_file)) if config.reference_url else unconfigured(Atlas,'REFERENCE_UNCONFIGURED')
         media=json.loads(config.media_config_file.read_text()) if config.media_config_file else None
+        if media:
+            for kind,keys in (('mask',('root',)),('censor',('python','model','upstream'))):
+                for key in keys:
+                    if media.get(kind) and key in media[kind]:
+                        media[kind][key]=str((config.media_config_file.parent/media[kind][key]).absolute())
         config.root.mkdir(parents=True,exist_ok=True,mode=0o700)
         with (config.root/'service.lock').open('a') as lock:
             try:fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
