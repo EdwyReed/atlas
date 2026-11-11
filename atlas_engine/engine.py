@@ -482,6 +482,7 @@ class Engine:
         with self.observer_lock:
             try:
                 self.native_queue.recover_receipts()
+                self.native_queue.maintain_receipts()
                 items=self.invoke.inventory()
                 if not isinstance(items,list):raise Fault('QUEUE_SCHEMA','list_all must return array')
                 seen=set()

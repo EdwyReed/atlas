@@ -1,6 +1,6 @@
 # Atlas
 
-Standalone headless Atlas, development package 0.4.0.dev3. The canonical corpus is embedded Qdrant; operational state is SQLite. HTTP, Streamable HTTP MCP and a thin CLI share the existing Engine dispatch. Hermes and InvokeAI are optional clients/backend integrations, not startup dependencies.
+Standalone headless Atlas, development package 0.4.0.dev4. The canonical corpus is embedded Qdrant; operational state is SQLite. HTTP, Streamable HTTP MCP and a thin CLI share the existing Engine dispatch. Hermes and InvokeAI are optional clients/backend integrations, not startup dependencies.
 
 This is a development package, not completion of the full Atlas product. See [SPEC.md](SPEC.md) and [OPERATIONS.json](OPERATIONS.json) for retained capabilities and exercised scope. No UI is delivered.
 
@@ -89,7 +89,7 @@ From the source directory, using the environment where the package is installed:
 
 ```sh
 /absolute/venv/bin/python -I -B verification/acceptance.py \
-  --wheel /absolute/path/to/atlas_engine-0.4.0.dev3-py3-none-any.whl \
+  --wheel /absolute/path/to/atlas_engine-0.4.0.dev4-py3-none-any.whl \
   --out /absolute/new/private-acceptance-directory
 ```
 
@@ -110,7 +110,7 @@ An explicit `--package-root` selects installed/built modules; without it this fi
 
 `generation.submitGraph` accepts `connection_id`, `backend_generation`, `request_id`, a native `graph` and optional `runs` (default 1, maximum 4). Configure a NEW isolated root with a pinned connection, `enable_writes: true`, and a policy file containing `{"accepted_modes":["native_graph"]}`. This explicit policy enables operator-supplied graphs; it does not validate model recipes or authorize GPU work. The original generation/image recipes are retained separately.
 
-The existing generation ledger durably saves scope, graph ID, retry key, batch defaults and complete native receipt. Exact request replay/restart never repeats a fenced enqueue. Lost ACK recovery reads the pinned native receipt endpoint; 404 stays unknown, not permission to submit again. Read jobs with `generation.get`, refresh using `observer.reconcile`, and cancel known receipt IDs with `generation.cancel`. Inspect job state even in a successful operation envelope. Native receipts are currently left unacknowledged, so upstream receipt capacity is a documented limit.
+The existing generation ledger durably saves scope, graph ID, retry key, batch defaults and complete native receipt. Exact request replay/restart never repeats a fenced enqueue. Lost ACK recovery reads the pinned native receipt endpoint; 404 stays unknown, not permission to submit again. Read jobs with `generation.get`, refresh using `observer.reconcile`, and cancel known receipt IDs with `generation.cancel`. Inspect job state even in a successful operation envelope. Native receipts are acknowledged only after the complete local receipt transaction commits. Lost ACK replies leave maintenance pending; the existing observer safely repeats the scoped ACK, including after native retention removes a receipt. Saved IDs and receipts remain local, never a reason to enqueue again. Native controls retention; Atlas does not purge receipts/history. A disabled native-write setting also disables receipt ACK maintenance.
 
 Repeat queue acceptance only against a disposable loopback backend:
 

@@ -55,7 +55,9 @@ class NativeQueue:
     def record(self, job, ack, receipt=False):
         self.check(job)
         ids = ack.get('item_ids') if isinstance(ack, dict) else None
-        batch_id = ack.get('batch_id') if receipt else ack.get('batch', {}).get('batch_id')
+        if not isinstance(ack, dict) or (not receipt and ack.get('queue_id') != self.scope()['queue_id']):
+            raise Fault('ACK_UNKNOWN', 'native response differs from pinned queue')
+        batch_id = ack.get('batch_id') if receipt else (ack.get('batch') or {}).get('batch_id')
         requested = job['prepared_submission']['batch']['runs']
         if (not isinstance(ids, list) or not isinstance(batch_id, str) or not batch_id or
                 type(ack.get('requested')) is not int or ack['requested'] != requested or
@@ -69,9 +71,33 @@ class NativeQueue:
             result = self.e.repo.update(job['id'], 'failed',
                 {'error': {'code': 'QUEUE_NOT_ADMITTED', 'message': 'native admitted zero items'}},
                 expected={'observing'}, event='submission.not_admitted')[0]
-        # Deliberately leave the native receipt unacknowledged. Retention/GC is not
-        # needed for this slice; no risk of deleting the only durable evidence.
-        return result
+        return self.acknowledge(result)
+
+    def acknowledge(self, job):
+        # Read the committed receipt, never acknowledge an in-memory response.
+        job = self.e.repo.get(job['id'])
+        if not self.e.allow_submit or not job.get('native_receipt') or not job.get('prepared_submission') or job.get('native_receipt_ack') == 'acknowledged':
+            return job
+        try:
+            self.check(job)
+            key = job['prepared_submission']['batch']['idempotency_key']
+            # Original native ACK is a scoped UPDATE, including a no-op after purge.
+            # A lost reply is safe to repeat; enqueue must NEVER be repeated here.
+            self.e.invoke.acknowledge_enqueue(key)
+        except Exception as exc:
+            return self.e.repo.update(job['id'], changes={
+                'native_receipt_ack': 'pending',
+                'native_receipt_ack_error': getattr(exc, 'code', type(exc).__name__)},
+                event='submission.receipt_ack_pending')[0]
+        return self.e.repo.update(job['id'], changes={
+            'native_receipt_ack': 'acknowledged', 'native_receipt_ack_error': None},
+            event='submission.receipt_acknowledged')[0]
+
+    def maintain_receipts(self):
+        # Includes terminal/zero-admission jobs and crash-after-local-commit.
+        # Native owns retention; Atlas never purges receipts or queue history.
+        for job in self.e.repo.iter_jobs('generation'):
+            self.acknowledge(job)
 
     def recover_receipts(self):
         for job in self.e.repo.iter_jobs('generation', {'submitting', 'ack_unknown'}):

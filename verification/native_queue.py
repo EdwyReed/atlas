@@ -30,18 +30,36 @@ def main():
     p.add_argument('--out',type=Path,required=True)
     p.add_argument('--package-root',type=Path,default=Path(__file__).absolute().parents[1])
     p.add_argument('--native-url')
+    p.add_argument('--retention-hook-url', help='optional private loopback fixture purge hook, NEVER a production endpoint')
     p.add_argument('--child',action='store_true');p.add_argument('--config',type=Path)
     a=p.parse_args()
     if a.child:return child(a.config,a.package_root)
     assert urlsplit(a.native_url).hostname=='127.0.0.1', 'isolated loopback backend required'
+    if a.retention_hook_url:
+        assert urlsplit(a.retention_hook_url).hostname == '127.0.0.1'
     out=a.out.absolute();out.mkdir(parents=True,exist_ok=False,mode=0o700)
     mode={'fault':'','hide_receipt':False,'hide_items':False,'process':None}
+    mode['ack_fault']=''
     calls=[]
     class Proxy(BaseHTTPRequestHandler):
         def log_message(self,*args):pass
         def forward(self):
             body=self.rfile.read(int(self.headers.get('Content-Length',0)))
             calls.append({'method':self.command,'path':self.path,'body':json.loads(body) if body else None})
+            is_ack=self.path.endswith('/enqueue_batch/acknowledge')
+            if is_ack:
+                # Independent SQLite connection proves the COMPLETE receipt transaction
+                # is committed before any native acknowledgement can leave Atlas.
+                with sqlite3.connect(out/'state/registry.sqlite3') as db:
+                    rows=[json.loads(row[0]) for row in db.execute('select data from jobs')]
+                saved=[row for row in rows if row.get('prepared_submission',{}).get('batch',{}).get('idempotency_key')==json.loads(body)['idempotency_key']]
+                assert len(saved)==1 and saved[0].get('native_receipt')
+                assert set(saved[0]['native_ids'])==set(saved[0]['native_receipt']['item_ids'])
+                if mode['ack_fault']=='crash-local':
+                    mode['ack_fault']=''
+                    os.kill(mode['process'].pid,signal.SIGKILL)
+                    self.close_connection=True
+                    return
             fault=mode['fault'] if self.path.endswith('/enqueue_batch') else ''
             if fault:mode['fault']=''
             if fault=='crash-before':
@@ -56,6 +74,10 @@ def main():
                 r=httpx.request(self.command,a.native_url+self.path,content=body or None,
                     headers={'Content-Type':'application/json'},trust_env=False,timeout=15)
                 status,raw=r.status_code,r.content
+            if is_ack and mode['ack_fault']=='lost':
+                assert status==204,(status,raw)
+                self.close_connection=True
+                return
             if fault in ('lost-ack','crash-after'):
                 assert status<300,(status,raw)
                 if fault=='crash-after':os.kill(mode['process'].pid,signal.SIGKILL)
@@ -143,11 +165,38 @@ def main():
         assert missing['native_ids']==recovered['native_ids'] and posts()==count
         mode['hide_items']=False
         passed('receipt recovers exact IDs after restart; missing queue history retains durable identity')
-        target=rs[0]['id'];before=len([c for c in calls if c['method']=='PUT'])
+        target=rs[0]['id'];target_ids=get(target)['native_ids']
+        before=len([c for c in calls if c['method']=='PUT'])
         canceled=ok('generation.cancel',{'job_id':target});assert canceled['state']=='canceled',canceled
         writes=[c['path'] for c in calls if c['method']=='PUT'][before:]
-        assert writes==[f'/api/v1/queue/default/i/{rs[0]["native_ids"][0]}/cancel'],writes
+        assert writes==[f'/api/v1/queue/default/i/{target_ids[0]}/cancel'],writes
         passed('targeted cancel reads and mutates only the receipt item; native canceled observation')
+        mode['ack_fault']='lost'
+        durable=ok('generation.submitGraph',payload('receipt-ack-lost'))
+        assert durable['native_receipt_ack']=='pending' and durable['native_ids'],durable
+        count=posts();reconcile()
+        key=durable['prepared_submission']['batch']['idempotency_key']
+        assert sum(c['path'].endswith('/acknowledge') and c['body']['idempotency_key']==key for c in calls)>=2
+        if a.retention_hook_url:
+            purge=httpx.post(a.retention_hook_url,trust_env=False);purge.raise_for_status()
+            assert purge.json()['deleted']>0,purge.text
+            r=httpx.get(a.native_url+'/api/v1/queue/default/enqueue_batch/receipt',params={'idempotency_key':key},trust_env=False)
+            assert r.status_code==404,r.text
+        mode['hide_receipt']=True;mode['ack_fault']='';reconcile()
+        after=get(durable['id'])
+        assert after['native_receipt_ack']=='acknowledged' and after['native_ids']==durable['native_ids']
+        assert after['native_items'] and after['native_receipt']==durable['native_receipt'] and posts()==count
+        assert asyncio.run(mcp('generation_submitGraph',payload('receipt-ack-lost')))['result']['id']==durable['id']
+        assert posts()==count
+        mode['hide_receipt']=False
+        passed('receipt ACK follows complete local commit; lost/repeated ACK and receipt 404 retain exact-ID observation without enqueue')
+        mode['ack_fault']='crash-local'
+        try:op('generation.submitGraph',payload('receipt-local-crash'))
+        except httpx.TransportError:pass
+        stop();count=posts();start();reconcile()
+        saved=ok('generation.submitGraph',payload('receipt-local-crash'))
+        assert saved['native_receipt_ack']=='acknowledged' and saved['native_ids'] and posts()==count,saved
+        passed('crash after local receipt commit before native ACK recovers maintenance on restart, never enqueue')
         mode['hide_receipt']=True;mode['hide_items']=True;mode['fault']='crash-before'
         try:op('generation.submitGraph',payload('crash-before'))
         except httpx.TransportError:pass

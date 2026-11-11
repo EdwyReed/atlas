@@ -44,6 +44,8 @@ class Invoke(JsonHTTP):
         return self.call('POST',self.qp+'/enqueue_batch',body)
     def enqueue_receipt(self,key):
         return self.call('GET',self.qp+'/enqueue_batch/receipt?idempotency_key='+quote(key,safe=''))
+    def acknowledge_enqueue(self,key):
+        return self.call('POST',self.qp+'/enqueue_batch/acknowledge',{'idempotency_key':key})
     def cancel(self,nid):return self.call('PUT',self.qp+'/i/'+str(int(nid))+'/cancel')
     def upload(self,raw,filename):
         r=self.http.post('/api/v1/images/upload',params={'image_category':'user','is_intermediate':'true'},files={'file':(filename,raw,'image/png' if filename.endswith('.png') else 'image/jpeg')})
