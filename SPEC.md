@@ -8,7 +8,7 @@ This slice must demonstrate authenticated HTTP status/capabilities/input schemas
 
 ## Implementation boundary
 
-- Package `atlas-engine` 0.4.0.dev4; executable `atlas` (alias `atlas-engine`) and `atlas-client`.
+- Package `atlas-engine` 0.4.0.dev5; executable `atlas` (alias `atlas-engine`), `atlas-client` and offline `atlas-state`.
 - Configuration is explicit JSON, paths relative to its directory. Defaults → config → explicit `--root/--host/--port`. No environment configuration, `.env` discovery or Hermes imports. Secret references are private files. No embedded plaintext InvokeAI token field.
 - Loopback IP bind by default; explicit container mode binds 0.0.0.0 only with an exact `container_endpoint` of `http://127.0.0.1:HOST_PORT`. Container Host/Origin allowlists contain only that endpoint; Docker publication MUST bind host 127.0.0.1. One process; no Uvicorn workers or reload. Every HTTP path, including MCP and unknown artifact paths, passes the same bearer/Host/Origin gate. Old public UI is not mounted or shipped.
 - Corpus is `root/corpus`; ledger/artifacts/cache belong to `root`. Existing lifetime locks and corpus revision CAS are reused. This is not distributed Qdrant CAS.
@@ -35,7 +35,7 @@ This slice must demonstrate authenticated HTTP status/capabilities/input schemas
 | Mask/censor/media workers | Retained and configurable, off without bindings; packaged CPU inference/early async admission/polling acceptance pending |
 | Native projects/workspace CAS/codecs and callable saved workflows | Narrow split-v4 generate-widget prompt codec implemented and fixture-tested; isolated pinned native router/service/SQLite smoke exercised. Full native server/auth, other codecs and callable saved workflows not accepted |
 | Full Canvas/compiler and native image-map semantic search | Not delivered; concrete versioned subsets/negotiated adapters remain target work |
-| Backup/restore/history/bytes/provenance/migration | Existing source tools retained; no live corpus opened, no populated fidelity rehearsal run |
+| Backup/restore/history/bytes/provenance/migration | Same-format offline backup→new-root restore implemented; populated synthetic five-collection raw preimage/history/evidence/tombstone/bytes and quarantine/reconciliation exercised. Full retained private legacy corpus migration NOT accepted; see BACKUP.md |
 | Docker CPU / dependency hashes | Non-root installed wheel, normal bridge loopback publication, clean volumes, HTTP/MCP/host CLI, auth negatives, owner contention and restart persistence exercised; exact pinned hashed CPU/build inputs and digest-pinned base. Linux amd64 only; no live deployment or publication |
 | SBOM/licenses and platform release | Not delivered; redistribution/provenance review and other platforms remain |
 

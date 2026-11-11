@@ -5,6 +5,7 @@ from urllib.parse import quote
 from PIL import Image,UnidentifiedImageError
 from .contracts import Fault
 from .repository import dump
+from .state_backup import storage_path
 MAX_BYTES=32*1024*1024;MAX_PIXELS=24*1024*1024
 class Artifacts:
     def __init__(self,repo,invoke):
@@ -36,7 +37,7 @@ class Artifacts:
         with self.repo.connect() as c:r=c.execute('select data from artifacts where id=?',(aid,)).fetchone()
         if r:
             row,data=self.get(aid)
-            if Path(row['path']).is_file() and hashlib.sha256(Path(row['path']).read_bytes()).hexdigest()==data['sha256']:
+            if storage_path(self.repo.root,row['path']).is_file() and hashlib.sha256(storage_path(self.repo.root,row['path']).read_bytes()).hexdigest()==data['sha256']:
                 self.sync(jid);return data
             raise Fault('ARTIFACT_INTEGRITY','stored artifact missing or changed; no silent overwrite')
         self.repo.update(jid,changes={'artifact_state':'fetching'},event='artifact.fetch_intent')
@@ -65,7 +66,7 @@ class Artifacts:
             if isinstance(e,Fault):raise
             raise Fault('ARTIFACT_FETCH_FAILED','download or decoding failed; rendering state unchanged') from e
     def read(self,aid,offset,size):
-        row,d=self.get(aid);p=Path(row['path'])
+        row,d=self.get(aid);p=storage_path(self.repo.root,row['path'])
         if not p.is_file() or p.stat().st_size!=d['size'] or hashlib.sha256(p.read_bytes()).hexdigest()!=d['sha256']:raise Fault('ARTIFACT_INTEGRITY','artifact file changed')
         if offset>d['size']:raise Fault('RANGE','offset outside artifact')
         with p.open('rb') as f:f.seek(offset);b=f.read(size)

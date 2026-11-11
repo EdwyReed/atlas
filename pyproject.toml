@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "atlas-engine"
-version = "0.4.0.dev4"
+version = "0.4.0.dev5"
 description = "Atlas standalone headless corpus and image workflow engine"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -17,6 +17,7 @@ semantic = ["fastembed>=0.7,<1"]
 atlas = "atlas_engine.server:main"
 atlas-engine = "atlas_engine.server:main"
 atlas-client = "atlas_engine.client:main"
+atlas-state = "atlas_engine.state_backup:main"
 atlas-migrate = "atlas_engine.migrate:main"
 atlas-delta-import = "atlas_engine.delta_import:main"
 atlas-legacy-import = "atlas_engine.legacy_import:main"

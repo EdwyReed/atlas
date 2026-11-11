@@ -144,7 +144,8 @@ class Media:
                 if ref['manifest_upload_id'] or ref['logits_upload_id']:raise Fault('VALIDATION','choose job prior OR legacy upload pair')
                 previous=self.result_job(ref['job_id'],principal,'mask')
                 if previous['state']!='succeeded':raise Fault('VALIDATION','prior mask result not successful')
-                prior={'manifest_path':previous['media_manifest_path'],'candidate':idx}
+                from .state_backup import storage_path
+                prior={'manifest_path':str(storage_path(self.repo.root,previous['media_manifest_path'])),'candidate':idx}
             else:
                 def blob(uid,limit):
                     if not uid:raise Fault('VALIDATION','legacy prior requires both uploads')

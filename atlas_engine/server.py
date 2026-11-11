@@ -130,7 +130,10 @@ def main():
             except BlockingIOError:raise Fault('STATE_BUSY','another daemon owns this state root')
             bind_connection(config.root,connection)
             from .projection import Projection
-            projection=Projection(config.projection_dir) if config.projection_dir else None
+            from .state_backup import restore_state
+            restored=restore_state(config.root)
+            quarantined=bool(restored and not restored['reconciled'])
+            projection=Projection(config.projection_dir) if config.projection_dir and not quarantined else None
             policy=json.loads(config.policy_file.read_text()) if config.policy_file else None
             writes=bool(connection and connection.enable_writes)
             engine=Engine(config.root,config.vocabulary,invoke,atlas,writes,policy,

@@ -10,6 +10,9 @@ from .graphs import _find,_model_ref,_build_graph
 TERMINAL={'succeeded','partially_succeeded','failed','canceled'}
 class Engine:
     def __init__(self,root,vocabulary,invoke,atlas,allow_submit=False,policy=None,native_events=False,projection=None,allow_admin=False,corpus_root=None,civitai_url='https://civitai.red',media_config=None):
+        from .state_backup import restore_state
+        state=restore_state(root)
+        self.restore_quarantined=bool(state and not state['reconciled'])
         self.projection=projection
         self.repo=Repository(root);self.vocab=Vocabulary(vocabulary);self.creative=CreativeSearch(self.vocab)
         from .knowledge import Knowledge
@@ -47,6 +50,9 @@ class Engine:
         from .events import NativeEvents
         self.native_events=NativeEvents(invoke,self.repo,self.native_dirty,self.wake) if native_events else None
     def start(self):
+        # Restored journals cannot authorize stale external effects. Keep reads
+        # available, but do not run recovery, receipt ACKs, workers or events.
+        if self.restore_quarantined:return
         if any(w and w.is_alive() for w in (self.thread,getattr(self,'cpu_thread',None),getattr(self,'delivery_thread',None),getattr(self,'acquisition_thread',None))):raise Fault('ALREADY_RUNNING','engine worker already running')
         self.stop.clear();self.projection_cursor=''
         self.workspace.recover()
@@ -168,6 +174,7 @@ class Engine:
                 return {'ok':True,'operation':op,'result':lookup(self.repo,p['namespace'],p['idempotency_key'],p['input'])}
             result=self.dispatch(op,p,principal,source)
             if op in ('capabilities','status'):
+                result['restore_reconciliation_required']=self.restore_quarantined
                 result['readiness']={
                     'core':True,'canonical_corpus':bool(self.corpus),
                     'vocabulary':self.vocab.path is not None,
@@ -257,6 +264,17 @@ class Engine:
         g=_build_graph(models,{},m,p['prompt'],p['negative_prompt'],p['seed'],p['width'],p['height'],p['steps'],p['cfg'],p['scheduler'],ls)
         return {'recipe_version':'atlas-txt2img-v1','mode':'txt2img','resolved_model':_model_ref(m),'resolved_loras':[{**_model_ref(l),'weight':l['weight']} for l in ls],'seed':p['seed'],'graph':g,'validation':'graph builder only; GPU family acceptance remains required','submit_enabled':self.allow_submit}
     def dispatch(self,op,p,principal,source):
+        if self.restore_quarantined:
+            from .state_backup import READS
+            if op not in READS:
+                # Exact known intent replay is a local receipt read only.
+                if op in ('projects.savePrompt','generation.submit','generation.submitGraph','batch.submit','corpus.put','corpus.delete','corpus.restore','corpus.import'):
+                    kind='native_workspace' if op=='projects.savePrompt' else 'corpus' if op.startswith('corpus.') else 'batch' if op=='batch.submit' else 'generation'
+                    intent={'operation':op,**p} if kind in ('corpus','native_workspace') else p
+                    existing=self.repo.request(principal,p['request_id'],kind,intent)
+                    if existing:
+                        return self.corpus.progress(existing) if kind=='corpus' else existing
+                raise Fault('RESTORE_RECONCILIATION_REQUIRED','restored state permits local reads only; reconcile external effects offline before restart')
         if op=='generation.submitGraph':return self.native_queue.submit_graph(p,principal,source)
         from .workspace import OPERATIONS as WORKSPACE_OPERATIONS
         if op in WORKSPACE_OPERATIONS:return self.workspace.call(op,p,principal,source)
