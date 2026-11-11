@@ -1,0 +1,72 @@
+"""Bounded original-byte artifacts, distinct from rendering and optional embeddings."""
+import base64,hashlib,io,json,os,uuid
+from pathlib import Path
+from urllib.parse import quote
+from PIL import Image,UnidentifiedImageError
+from .contracts import Fault
+from .repository import dump
+MAX_BYTES=32*1024*1024;MAX_PIXELS=24*1024*1024
+class Artifacts:
+    def __init__(self,repo,invoke):
+        import threading
+        self.lock=threading.Lock()
+        self.repo=repo;self.invoke=invoke;self.root=repo.root/'artifacts';self.root.mkdir(exist_ok=True)
+        with repo.connect() as c:c.execute('''create table if not exists artifacts(id TEXT PRIMARY KEY,job_id TEXT NOT NULL,image_name TEXT NOT NULL,path TEXT NOT NULL,data TEXT NOT NULL,UNIQUE(job_id,image_name))''')
+    def get(self,aid):
+        with self.repo.connect() as c:r=c.execute('select * from artifacts where id=?',(aid,)).fetchone()
+        if not r:raise Fault('NOT_FOUND','artifact not found')
+        return r,json.loads(r['data'])
+    def list(self,jid):
+        self.repo.get(jid)
+        with self.repo.connect() as c:
+            return [json.loads(r[0]) for r in c.execute('select data from artifacts where job_id=? order by image_name',(jid,))]
+    def sync(self,jid):
+        # Repair a crash after durable artifact commit but before job metadata.
+        j=self.repo.get(jid);items=self.list(jid)
+        names={a['image_name'] for a in items}
+        state='fetched' if j.get('outputs') and set(j['outputs'])<=names else 'partially_fetched' if names else 'not_fetched'
+        if j.get('artifacts')!=items or j.get('artifact_state')!=state:
+            self.repo.update(jid,changes={'artifact_state':state,'artifacts':items},event='artifact.lineage_synced')
+    def fetch(self,jid,name):
+        with self.lock:return self._fetch(jid,name)
+    def _fetch(self,jid,name):
+        j=self.repo.get(jid)
+        if name not in j.get('outputs',[]):raise Fault('ARTIFACT_NOT_LINKED','image is not an observed final output of this job')
+        aid=str(uuid.uuid5(uuid.NAMESPACE_URL,'atlas-artifact:'+jid+':'+name))
+        with self.repo.connect() as c:r=c.execute('select data from artifacts where id=?',(aid,)).fetchone()
+        if r:
+            row,data=self.get(aid)
+            if Path(row['path']).is_file() and hashlib.sha256(Path(row['path']).read_bytes()).hexdigest()==data['sha256']:
+                self.sync(jid);return data
+            raise Fault('ARTIFACT_INTEGRITY','stored artifact missing or changed; no silent overwrite')
+        self.repo.update(jid,changes={'artifact_state':'fetching'},event='artifact.fetch_intent')
+        try:
+            raw=bytearray()
+            with self.invoke.http.stream('GET','/api/v1/images/i/'+quote(name,safe='')+'/full') as r:
+                if r.status_code!=200:raise Fault('ARTIFACT_HTTP','image GET rejected')
+                for chunk in r.iter_bytes():
+                    if len(raw)+len(chunk)>MAX_BYTES:raise Fault('IMAGE_LIMIT','image exceeds byte limit')
+                    raw.extend(chunk)
+            with Image.open(io.BytesIO(raw)) as im:
+                if im.width*im.height>MAX_PIXELS or im.format not in ('PNG','JPEG'):raise Fault('IMAGE_LIMIT','unsupported image or pixel limit')
+                im.load();width,height=im.size;mime='image/png' if im.format=='PNG' else 'image/jpeg'
+            data={'artifact_id':aid,'job_id':jid,'image_name':name,'sha256':hashlib.sha256(raw).hexdigest(),'size':len(raw),'width':width,'height':height,'mime':mime,'embedding_state':'disabled'}
+            dest=self.root/aid;tmp=self.root/(aid+'.'+uuid.uuid4().hex+'.part')
+            try:
+                with tmp.open('xb') as f:f.write(raw);f.flush();os.fsync(f.fileno())
+                os.replace(tmp,dest)
+                with self.repo.connect() as c:c.execute('insert into artifacts values(?,?,?,?,?)',(aid,jid,name,str(dest.resolve()),dump(data)))
+            finally:
+                if tmp.exists():tmp.unlink()
+            self.sync(jid)
+            return data
+        except Exception as e:
+            self.repo.update(jid,changes={'artifact_state':'fetch_failed','artifact_error':getattr(e,'code',type(e).__name__)},event='artifact.fetch_failed')
+            if isinstance(e,Fault):raise
+            raise Fault('ARTIFACT_FETCH_FAILED','download or decoding failed; rendering state unchanged') from e
+    def read(self,aid,offset,size):
+        row,d=self.get(aid);p=Path(row['path'])
+        if not p.is_file() or p.stat().st_size!=d['size'] or hashlib.sha256(p.read_bytes()).hexdigest()!=d['sha256']:raise Fault('ARTIFACT_INTEGRITY','artifact file changed')
+        if offset>d['size']:raise Fault('RANGE','offset outside artifact')
+        with p.open('rb') as f:f.seek(offset);b=f.read(size)
+        return {**d,'offset':offset,'base64':base64.b64encode(b).decode(),'eof':offset+len(b)==d['size']}
