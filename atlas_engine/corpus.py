@@ -350,6 +350,31 @@ class Corpus:
             raise
         return self.progress(job)
 
+    def search(self, query, limit):
+        """Literal stored-head view, not semantic encoding or a graph overlay.
+
+        Keep a finite scan; never silently call a truncated result complete.
+        Revision-only crash repair remains the existing get/page responsibility.
+        """
+        from .reference_reader import Budget
+        budget = Budget()
+        items = []
+        scanned = 0
+        with self.lock:
+            for collection in COLLECTIONS:
+                for head in self.scan(collection, kind='head'):
+                    budget.check()
+                    scanned += 1
+                    if scanned > 5000:
+                        return {'items':items,'complete':False,'scope':'stored canonical heads','scanned':5000}
+                    head = self.read_point(collection, head['revision_id'])
+                    if head is None:raise Fault('CORPUS_INTEGRITY','stored head revision missing')
+                    if not head['deleted'] and query.casefold() in dump({'identity':head['identity'],'body':head['body']}).casefold():
+                        if len(items) == limit:
+                            return {'items':items,'complete':False,'scope':'stored canonical heads','scanned':scanned}
+                        items.append(head)
+        return {'items':items,'complete':True,'scope':'stored canonical heads','scanned':scanned}
+
     def call(self, op, p, principal, source):
         if op in ('corpus.import.get', 'corpus.import.resume'):
             with self.lock:

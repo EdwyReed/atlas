@@ -93,6 +93,7 @@ class Engine:
                     if not claimed:continue
                     try:
                         creative,context=self.creative_context(j['payload'],j['owner_principal'])
+                        if j.get('vocabulary_sha256') and j['vocabulary_sha256']!=creative.v.fingerprint:raise Fault('VOCABULARY_CHANGED','vocabulary bytes changed since dream intent; use a new request_id')
                         pinned=j.get('reference_context')
                         if pinned and pinned['snapshot_sha256']!=context['snapshot_sha256']:raise Fault('REFERENCE_CHANGED','reference heads changed since dream intent; use a new request_id')
                         r=creative.dream(j['payload'],lambda:self.stop.is_set() or self.repo.get(j['id'])['state']=='canceled')
@@ -183,6 +184,7 @@ class Engine:
                               'verified':False},
                     'semantic':{'verified':False,'model_downloads':False}}
                 if op=='capabilities':
+                    result['feedback_policy']={'mode':'annotation_only','automatic_ranking_effect':False,'scope':'job-level attributed keep/reject/revise and literal note; callers explicitly edit subsequent inputs'}
                     result['curated_creative']['enabled']=self.vocab.path is not None
                     result['transport_acceptance']='partial; see SPEC.md, operation presence is not execution acceptance'
             return {'ok':True,'operation':op,'result':result}
@@ -342,7 +344,7 @@ class Engine:
             existing=self.repo.request(principal,p['request_id'],'dream',p)
             if existing:return existing
             creative,context=self.creative_context(p,principal)
-            extra={'reference_context':context}
+            extra={'reference_context':context,'vocabulary_sha256':creative.v.fingerprint}
             if p['model']:extra['resolved_model']=_model_ref(self.resolve({'model':p['model']})[1])
             j,_=self.repo.reserve(principal,source,p['request_id'],'dream',p,extra);self.wake.set();return j
         if op in ('dream.get','generation.get'):return self.require_kind(p['job_id'],op.split('.')[0])
@@ -424,7 +426,7 @@ class Engine:
                                    if hasattr(self.atlas,'search_resources') else self.atlas.resources())
                 except Fault as e:
                     import httpx
-                    unavailable=(e.code=='UPSTREAM_UNAVAILABLE' and isinstance(e.__cause__,httpx.TransportError)) or e.code in ('REMOTE_HTTP_502','REMOTE_HTTP_503','REMOTE_HTTP_504')
+                    unavailable=(e.code=='UPSTREAM_UNAVAILABLE' and isinstance(e.__cause__,httpx.TransportError)) or e.code in ('REFERENCE_UNCONFIGURED','REMOTE_HTTP_502','REMOTE_HTTP_503','REMOTE_HTTP_504')
                     if not unavailable:raise
                     resource_rows=[]
                     resource_source={'status':'unavailable','error':{'code':e.code},'complete':False}
@@ -437,7 +439,8 @@ class Engine:
                 semantic=self.atlas.query(vector,p['limit'])
             # This is application-level literal+dense union, not sparse/dense RRF.
             knowledge=self.knowledge.search(p['query'],limit=p['limit']) if p['mode'] in ('literal','hybrid') else {'items':[],'next_after':None}
-            return {'tags':tags,'resources':resources,'knowledge':knowledge,'semantic':semantic,'search_mode':p['mode'],'embedding_space':self.text_encoder.model_name if semantic else None,'fusion':'separate evidence lists; no score comparability claim','partial':resource_source['status']=='unavailable','sources':{'resources':resource_source}}
+            corpus=self.corpus.search(p['query'],p['limit']) if self.corpus and p['mode'] in ('literal','hybrid') else {'items':[],'complete':True}
+            return {'tags':tags,'resources':resources,'knowledge':knowledge,'corpus':corpus,'semantic':semantic,'search_mode':p['mode'],'embedding_space':self.text_encoder.model_name if semantic else None,'fusion':'separate evidence lists; no score comparability claim','partial':resource_source['status']=='unavailable' or not corpus['complete'],'sources':{'resources':resource_source}}
         if op=='evidence':
             legacy=self.atlas.evidence(p['kind'],p['key']) if p['kind'] in ('tag','resource') else []
             if p['kind']=='tag':return legacy

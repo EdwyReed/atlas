@@ -1,6 +1,6 @@
 # Atlas
 
-Standalone headless Atlas, development package 0.4.0.dev4. The canonical corpus is embedded Qdrant; operational state is SQLite. HTTP, Streamable HTTP MCP and a thin CLI share the existing Engine dispatch. Hermes and InvokeAI are optional clients/backend integrations, not startup dependencies.
+Standalone headless Atlas, development package 0.4.0.dev6. The canonical corpus is embedded Qdrant; operational state is SQLite. HTTP, Streamable HTTP MCP and a thin CLI share the existing Engine dispatch. Hermes and InvokeAI are optional clients/backend integrations, not startup dependencies.
 
 This is a development package, not completion of the full Atlas product. See [SPEC.md](SPEC.md) and [OPERATIONS.json](OPERATIONS.json) for retained capabilities and exercised scope. No UI is delivered.
 
@@ -89,7 +89,7 @@ From the source directory, using the environment where the package is installed:
 
 ```sh
 /absolute/venv/bin/python -I -B verification/acceptance.py \
-  --wheel /absolute/path/to/atlas_engine-0.4.0.dev4-py3-none-any.whl \
+  --wheel /absolute/path/to/atlas_engine-0.4.0.dev6-py3-none-any.whl \
   --out /absolute/new/private-acceptance-directory
 ```
 
@@ -126,4 +126,43 @@ This runner submits integer graphs, cancels its exact items and injects lost rep
 
 [Build and isolated bridge run](container/README.md) documents the non-root CPU image, private mounted configuration, writable state volume and repeatable `--docker-image` boundary acceptance. Its base digest and hashed dependency inputs are pinned independently of the package version ranges. HTTP, real MCP and the installed host CLI were exercised against the built image on clean volumes, including auth negatives, duplicate ownership refusal and restart persistence.
 
-The previously accepted Docker snapshot is 0.4.0.dev1; it has not been rebuilt or accepted with this workspace slice. No populated migration/restore, full native server execution, GPU job or packaged media inference is claimed here. Source licensing/third-party redistribution, SBOM and release provenance still need the release review before publication. No live deployment or public service is part of this delivery.
+The previously accepted Docker snapshot is 0.4.0.dev1; it has not been rebuilt for subsequent source slices. Same-format populated synthetic backup/restore and quarantine/reconciliation were accepted in dev5; see [BACKUP.md](BACKUP.md). Full legacy migration, full native server execution, GPU jobs and packaged media inference remain unaccepted. Source licensing/third-party redistribution, SBOM and release provenance still need release review before publication. No live deployment or public service is part of this delivery.
+
+## Populated literal search and numerical creative discovery
+
+Configure `"vocabulary":"vocabulary.sqlite"` in `atlas.json` before starting the daemon. Supply a closed, immutable, compatible SQLite snapshot, keep it outside source, and work on a private copy. Do not copy a live WAL database as a single file or mutate a running vocabulary. Required tables for this adapter:
+
+```sql
+CREATE TABLE tags(id INTEGER PRIMARY KEY, tag TEXT UNIQUE, category TEXT, post_count INTEGER);
+CREATE TABLE related(tag TEXT, related_tag TEXT, score REAL, support REAL,
+                     pair_count INTEGER, pmi REAL, related_count INTEGER);
+CREATE INDEX outgoing ON related(tag);
+CREATE INDEX incoming ON related(related_tag);
+```
+
+Extra source columns are allowed. IDs must be stable numeric identities; edges retain their observed direction, conditional support, pair counts, PMI and target frequency. Category is descriptive metadata, not a ranking rule. No graph is inferred from prose, knowledge bodies or canonical corpus text. Canonical Qdrant history, the optional numerical vocabulary and historical knowledge are separate stores, not silently merged indexes.
+
+```sh
+atlas-client search --token-file token --arguments '{"query":"observatory","mode":"literal"}'
+atlas-client enrich --token-file token --arguments '{"tags":["observatory"],"prompt":"  Unknown Ω  ","seed":17,"budget":3}'
+atlas-client dream.submit --token-file token --arguments '{"request_id":"idea-1","tags":["observatory"],"seed":17,"budget":3,"count":2,"trajectories":4}'
+atlas-client dream.get --token-file token --arguments '{"job_id":"RETURNED_JOB_ID"}'
+atlas-client feedback.record --token-file token --arguments '{"request_id":"review-1","target_id":"RETURNED_JOB_ID","reaction":"reject","note":"Prefer a different next input"}'
+atlas-client feedback.list --token-file token --arguments '{"job_id":"RETURNED_JOB_ID"}'
+```
+
+Use an actual observed tag in your vocabulary instead of the synthetic example `observatory`. `search` returns separate `tags`, `resources`, `knowledge`, `corpus` and `semantic` lists/views. An unconfigured reference backend is explicitly unavailable/partial but no longer prevents local populated lookup. Canonical search reads stored current head revisions, excludes tombstones and superseded bodies, caps scanning at 5000 heads and marks truncation with `corpus.complete:false`. It is not a paginated or semantic index; revision-only interrupted heads remain recoverable through existing `corpus.get/page`. Optional-source auth/protocol errors are not silently treated as absence. Missing vocabulary still fails explicitly; semantic/hybrid encoding is not accepted by this slice.
+
+Enrich is synchronous; Dream is a durable CPU job: inspect `state`, not just the operation envelope. Literal prompts/unknowns and binding scopes remain intact; results expose directed evidence, ancestry, numerical utilities and vocabulary SHA-256. Empty Dream proposes from observed incident IDs, never inferred intent. Unknown-only intent fails instead of becoming a random scene. Same normalized input/seed and unchanged vocabulary/reference heads reproduce results; completed request replay returns the saved job without recomputing. Newly admitted Dream work pins vocabulary bytes; changed vocabulary after interruption yields `VOCABULARY_CHANGED`, not a different result under an old intent. Older jobs lacking that pin retain historical compatibility, not a new retroactive provenance guarantee.
+
+`capabilities.feedback_policy` is explicit: feedback is a durable attributed **job-level annotation only**. It does not train weights, alter graph rankings or create hidden tag constraints. The next identical request produces identical output; the caller explicitly revises the next input. `feedback.list` preserves all reactions and literal notes across restart. Historical knowledge has a separate existing offline importer (`atlas-delta-import`, reviewed manifest/archive and explicit isolated-destination marker); no new network ingestion endpoint is introduced.
+
+Repeat the installed populated outcome with a NEW private output directory:
+
+```sh
+/absolute/venv/bin/python -I -B verification/creative_portable.py \
+  --wheel /absolute/path/to/atlas_engine-0.4.0.dev6-py3-none-any.whl \
+  --out /absolute/new/private-creative-directory
+```
+
+Default data is an owned synthetic graph, synthetic canonical revisions and a synthetic knowledge reference, not real-vocabulary or full migration acceptance. The runner checks HTTP lookup/enrich/Dream, SDK MCP replay, graph evidence, category/rename invariance, active numerical/public cancellation, SIGKILL recovery, changed-vocabulary refusal, feedback's annotation-only effect and exact restart/history preservation. `--vocabulary /sealed/snapshot.sqlite --anchor known_literal_tag` copies an explicitly supplied immutable vocabulary before opening it; this path skips synthetic active-crash/cancel injection and is not a claim that real vocabulary was exercised in the shipped receipt. The same runner generates no credentials from Hermes, uses empty HOME and forbids child non-loopback connections. Do not commit its evidence or databases.

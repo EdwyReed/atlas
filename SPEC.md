@@ -1,4 +1,13 @@
-# Atlas — headless slice 1
+# Atlas — headless standalone
+
+## Populated creative slice — implementation contract
+
+Use one installed-package runner over authenticated HTTP and SDK MCP, a new private root, a compatible user-supplied vocabulary or an explicitly synthetic populated graph, and synthetic canonical/knowledge records. No live corpus, downloads, model encoding, InvokeAI or GPU. Bounded discovery of older creative evidence found references to the live Danbooru database, not a sealed compatible vocabulary snapshot; do not open that source. This acceptance uses synthetic data, not real-vocabulary or migration acceptance.
+
+Literal search must work without an optional reference backend and expose canonical corpus matches separately from vocabulary and historical knowledge. Preserve opaque bodies and all revisions. Enrich and Dream retain literal input/unknowns, seeded numeric graph results and directed evidence. Category/label renaming cannot change ID-based math. Dream intents pin vocabulary bytes and reference heads; changed vocabulary before execution fails explicitly, while completed replay returns the durable result. Existing restored-root quarantine remains authoritative.
+
+Feedback is an attributed durable job-level annotation (keep/reject/revise + literal note), not an automatic ranking update, tag constraint or learned policy. Subsequent same-input output must remain unchanged; callers explicitly edit their next input. Expose this actual policy rather than claiming learning. Verify target, idempotency/conflict, readback and restart retention. Check bounded cooperative cancellation in the numerical worker and public terminal cancellation separately. Preserve existing core acceptance and compare complete source/wheel/installed module sets and hashes.
+
 
 ## Contract
 
@@ -8,7 +17,7 @@ This slice must demonstrate authenticated HTTP status/capabilities/input schemas
 
 ## Implementation boundary
 
-- Package `atlas-engine` 0.4.0.dev5; executable `atlas` (alias `atlas-engine`), `atlas-client` and offline `atlas-state`.
+- Package `atlas-engine` 0.4.0.dev6; executable `atlas` (alias `atlas-engine`), `atlas-client` and offline `atlas-state`.
 - Configuration is explicit JSON, paths relative to its directory. Defaults → config → explicit `--root/--host/--port`. No environment configuration, `.env` discovery or Hermes imports. Secret references are private files. No embedded plaintext InvokeAI token field.
 - Loopback IP bind by default; explicit container mode binds 0.0.0.0 only with an exact `container_endpoint` of `http://127.0.0.1:HOST_PORT`. Container Host/Origin allowlists contain only that endpoint; Docker publication MUST bind host 127.0.0.1. One process; no Uvicorn workers or reload. Every HTTP path, including MCP and unknown artifact paths, passes the same bearer/Host/Origin gate. Old public UI is not mounted or shipped.
 - Corpus is `root/corpus`; ledger/artifacts/cache belong to `root`. Existing lifetime locks and corpus revision CAS are reused. This is not distributed Qdrant CAS.
@@ -26,8 +35,8 @@ This slice must demonstrate authenticated HTTP status/capabilities/input schemas
 | HTTP/MCP/CLI registry | Implemented; only named acceptance scenarios exercised, not whole transport parity |
 | Canonical corpus CRUD/history/import/relations | Retained; put/get/page/history and replay/restart exercised; full fidelity migration remains |
 | SQLite jobs/events/idempotency/legacy bindings | Retained; corpus intent replay/conflict exercised; general interruption/recovery not reaccepted |
-| Literal/semantic/reference search, knowledge, records | Retained; optional source readiness explicit; populated search/embedding execution not run |
-| Enrich/dream/feedback without generative LLM | Retained; missing-vocabulary refusal exercised; creative algorithm scenarios not run |
+| Literal/semantic/reference search, knowledge, records | Installed populated synthetic literal vocabulary + canonical head + offline-imported knowledge lookup exercised; missing optional reference explicit. Semantic encoding, real-vocabulary execution and full records family remain unaccepted |
+| Enrich/dream/feedback without generative LLM | Installed populated synthetic HTTP/MCP outcome exercised: literal/unknown preservation, numeric category/rename invariance, directed evidence, seeded repeatability, active cancel, crash/restart/replay and vocabulary pin refusal. Feedback is durable annotation-only, explicitly no implicit ranking effect; real-vocabulary acceptance remains |
 | Model catalog/install/acquisition/LoRA+checkpoint onboarding/gallery | Retained; no external acquisition/install/registration run |
 | Generation/batch/queue/observation/cancel | Scoped durable admission and GET-receipt recovery implemented on existing generation path; isolated native queue admission/cancel exercised with fixture graph codec. No native graph execution or GPU family acceptance |
 | Boards/images/uploads/artifact fetch/publish | Retained; no native write or artifact transfer run |
@@ -38,6 +47,18 @@ This slice must demonstrate authenticated HTTP status/capabilities/input schemas
 | Backup/restore/history/bytes/provenance/migration | Same-format offline backup→new-root restore implemented; populated synthetic five-collection raw preimage/history/evidence/tombstone/bytes and quarantine/reconciliation exercised. Full retained private legacy corpus migration NOT accepted; see BACKUP.md |
 | Docker CPU / dependency hashes | Non-root installed wheel, normal bridge loopback publication, clean volumes, HTTP/MCP/host CLI, auth negatives, owner contention and restart persistence exercised; exact pinned hashed CPU/build inputs and digest-pinned base. Linux amd64 only; no live deployment or publication |
 | SBOM/licenses and platform release | Not delivered; redistribution/provenance review and other platforms remain |
+
+## Delivery state — dev6
+
+| Outcome | Source / packaged | Actually exercised | Limit |
+|---|---|---|---|
+| Populated literal lookup | Existing dispatch plus optional-reference refusal fix and bounded canonical head view; dev6 installed wheel | HTTP vocabulary + knowledge + canonical matches, obsolete/tombstoned bodies excluded, result-limit truncation explicit | Synthetic data; 5000-head cap, no paginated/semantic corpus index or revision-only head repair in search |
+| Enrich / Dream | Existing opaque numerical algorithm unchanged; dev6 pins new Dream vocabulary SHA-256 | HTTP seeded output/evidence/unknown literals, numeric category+rename metamorphisms, empty proposals, active cancel, SIGKILL restart; SDK MCP durable replay | No real-vocabulary run, no LLM/embedding/model execution; historical unpinned intents unchanged |
+| Feedback / history | Existing ledger + explicit capability policy; dev6 | Durable target-bound annotations, conflict/replay, unchanged subsequent output, exact jobs/events/knowledge/canonical-history readback after restart | Job-level annotations only, no automatic preference learning or per-idea reactions |
+| Core / restore guard | dev6 installed wheel; complete source/wheel/installed Python module equality checked | Core HTTP/MCP/CLI/auth/ownership/restart runner and existing populated five-collection offline backup/restore/quarantine runner passed | Same-format synthetic backup, not full legacy migration; no live services changed |
+| Container / native / media | Retained source; previous dev1 container accepted separately | No new container, full native execution, semantic encoding or packaged media inference run in this slice | Existing native model-manager dependency blocker unchanged; no bootstrap retry, downloads or GPU |
+
+Repeat commands: `verification/creative_portable.py`, `verification/acceptance.py`, `verification/backup_restore.py` with the installed environment's absolute Python, `-I -B`, a NEW outside-source `--out`, and `--wheel` where supported. README documents the public client flow and compatible vocabulary schema. Private generated data, credentials and evidence are not release payload.
 
 ## Acceptance
 
