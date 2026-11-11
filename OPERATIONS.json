@@ -1,5 +1,7 @@
 {
-  "scope": "Full retained baseline registry; execution statuses refer only to slice 1. Target families absent from baseline are tracked in SPEC.md.",
+  "scope": "Complete current input-schema registry. Statuses distinguish core synthetic checks from the narrow workspace HTTP fixture; retained does not mean accepted. See SPEC.md for unimplemented target families.",
+  "operation_count": 112,
+  "workspace_native_boundary": "Additionally exercised against pinned InvokeAI projects router/original service/SQLite with synthetic caller/config/service wiring and metadata-created schema. Full-server bootstrap/auth/migrations/UI and other codecs remain unverified.",
   "operations": {
     "admin.get": "retained_not_exercised",
     "artifact.fetch": "retained_not_exercised",
@@ -98,6 +100,8 @@
     "outbox.flush": "retained_not_exercised",
     "projection.get": "retained_not_exercised",
     "projection.page": "retained_not_exercised",
+    "projects.get": "fixture_tested_narrow_split4_generate1_codec",
+    "projects.savePrompt": "fixture_tested_narrow_split4_generate1_codec",
     "queue.status": "retained_not_exercised",
     "review.prepare": "retained_not_exercised",
     "review.record": "retained_not_exercised",

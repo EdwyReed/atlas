@@ -8,14 +8,14 @@ This slice must demonstrate authenticated HTTP status/capabilities/input schemas
 
 ## Implementation boundary
 
-- Package `atlas-engine` 0.4.0.dev1; executable `atlas` (alias `atlas-engine`) and `atlas-client`.
+- Package `atlas-engine` 0.4.0.dev2; executable `atlas` (alias `atlas-engine`) and `atlas-client`.
 - Configuration is explicit JSON, paths relative to its directory. Defaults → config → explicit `--root/--host/--port`. No environment configuration, `.env` discovery or Hermes imports. Secret references are private files. No embedded plaintext InvokeAI token field.
 - Loopback IP bind by default; explicit container mode binds 0.0.0.0 only with an exact `container_endpoint` of `http://127.0.0.1:HOST_PORT`. Container Host/Origin allowlists contain only that endpoint; Docker publication MUST bind host 127.0.0.1. One process; no Uvicorn workers or reload. Every HTTP path, including MCP and unknown artifact paths, passes the same bearer/Host/Origin gate. Old public UI is not mounted or shipped.
 - Corpus is `root/corpus`; ledger/artifacts/cache belong to `root`. Existing lifetime locks and corpus revision CAS are reused. This is not distributed Qdrant CAS.
 - `connections` supports zero or one InvokeAI connection. More are rejected rather than silently choosing one. ID, URL, operator-declared backend generation/account scope are pinned to the state root; changing even an empty binding requires a new root or a future reviewed migration. Token rotation does not prove backend identity. Multi-connection scoped intents/refs are NOT implemented.
 - Existing optional vocabulary, reference mirrors/typed references/deltas, local projection, policy and media bindings remain configurable. These paths were retained, not accepted by the empty-core smoke. Sealed attachment preparation, HTTP projection and migration utilities remain source mechanisms; the new ordinary launcher does not expose every old migration flag.
 - `fastembed` is the `semantic` extra, loaded lazily with local-only weights. Missing vocabulary fails explicitly. Missing InvokeAI/reference adapters cannot open a network socket. Public acquisition endpoints remain available for explicit operations; no global production egress ban is claimed.
-- Input schemas are inherited. New output/error schemas, DTO sanitization across all legacy operations, native CAS/receipts and the complete cycle-03 envelope are not delivered here.
+- Input schemas are inherited, with scoped native workspace schemas added. New output/error schemas, DTO sanitization across all legacy operations, general native CAS/receipts and the complete cycle-03 envelope are not delivered here.
 
 ## Retained product inventory
 
@@ -33,7 +33,7 @@ This slice must demonstrate authenticated HTTP status/capabilities/input schemas
 | Boards/images/uploads/artifact fetch/publish | Retained; no native write or artifact transfer run |
 | Inpaint/upscale/refinement and concrete graphs | Existing recipe mechanisms retained; GPU/mask polarity/lineage acceptance pending; refinement coverage not established |
 | Mask/censor/media workers | Retained and configurable, off without bindings; packaged CPU inference/early async admission/polling acceptance pending |
-| Native projects/workspace CAS/codecs and callable saved workflows | Target requirements retained; not implemented by this slice; no arbitrary workflow parity claimed |
+| Native projects/workspace CAS/codecs and callable saved workflows | Narrow split-v4 generate-widget prompt codec implemented and fixture-tested; isolated pinned native router/service/SQLite smoke exercised. Full native server/auth, other codecs and callable saved workflows not accepted |
 | Full Canvas/compiler and native image-map semantic search | Not delivered; concrete versioned subsets/negotiated adapters remain target work |
 | Backup/restore/history/bytes/provenance/migration | Existing source tools retained; no live corpus opened, no populated fidelity rehearsal run |
 | Docker CPU / dependency hashes | Non-root installed wheel, normal bridge loopback publication, clean volumes, HTTP/MCP/host CLI, auth negatives, owner contention and restart persistence exercised; exact pinned hashed CPU/build inputs and digest-pinned base. Linux amd64 only; no live deployment or publication |
@@ -45,6 +45,16 @@ This slice must demonstrate authenticated HTTP status/capabilities/input schemas
 
 The exact command/results and dependency snapshot are in the private implementation receipt. The runner is the compact repeatable acceptance for this slice; it is not a full-product suite. No live deployment, corpus mutation, model download, GPU job or remote Git write is part of acceptance.
 
-## Next coherent slice
+## Native workspace slice — implementation contract
 
-The non-root CPU container boundary is delivered and exercised. Next, choose one disposable InvokeAI 7 workspace codec and implement scoped native intent binding before enabling multi-connection writes. Full-product completion still requires the remaining families above.
+Outcome: `projects.get` → `projects.savePrompt` → native readback through the same HTTP/MCP/CLI dispatch. InvokeAI remains authoritative. References explicitly bind connection ID, operator-declared backend generation and project ID; the existing zero/one pinned connection limit remains.
+
+Supported codec: InvokeAI 7 split document v4, canvas compatibility at most v2, existing workspace with settingsLayering=1 and an explicitly selected `generate` widget instance. Edit only `widgetInstances[id].state.values.positivePrompt`; preserve every other JSON value, including opaque fields. No whole-document migration, workspace creation, prompt history rewrite, graph compilation or inherited-default resolution. Read returns opaque native halves and independent content/workspace revisions. Unsupported codec fails closed.
+
+Save requires the caller's workspace revision. Durable SQLite request binding (including full scope, exact revision and prompt) precedes native PUT. Native workspace CAS, never content PUT or refreshed-revision retry. Persist exact prepared request and ACK before verification. Replay returns the same receipt without PUT; payload/scope changes conflict. A stale CAS is a durable failed receipt. Interrupted/failed PUT without durable ACK stays `ack_unknown`, including when native prompt equals the intended prompt. A durable ACK can be verified after restart using exact acknowledged workspace revision and full workspace data; intervening edits remain unknown. Recovery never writes. Local prepared documents are intent evidence, not an authoritative native store.
+
+Acceptance runner must exercise HTTP and SDK MCP success/readback, opaque preservation, independent revisions, stale/concurrent CAS, request replay/change, restart and lost ACK, against an isolated target with no live proxy. Native upstream layering acceptance and fixture acceptance are reported separately. Existing core acceptance remains required; unchanged Docker image is not rebuilt for this source slice. Full-product completion still requires the inventory above.
+
+Verification boundaries: `verification/native_workspace.py` exercises a deterministic HTTP contract fixture, including interrupted submissions and read-only reconciliation. A separate private integration harness exercised the pinned `be318726dc800ff3ba7c6f086fda603fd82abb86` projects router, original service, serializers, queries, transactions, DTOs and SQLAlchemy metadata on synthetic SQLite. Only config-type, synthetic caller and invoker/service dependency wiring were substituted; no serialization/transaction/CAS patching. Metadata-created tables and explicitly seeded lock rows are not migration acceptance. No full InvokeAI startup/auth, UI hydration, live state or GPU work was exercised.
+
+Known conservative limits: readback exceptions and intervening workspace edits retain `ack_unknown` even with a durable ACK; the saved ACK remains evidence but cannot prove the current workspace. Ordinary HTTP/network/JSON preflight failures become durable failed receipts before PUT. Unexpected non-Fault preflight exceptions can leave a reserved queued intent; restart/replay never dispatches it. No remote authorship is inferred from matching prompts or documents.

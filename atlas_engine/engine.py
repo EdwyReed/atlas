@@ -25,6 +25,8 @@ class Engine:
         self.onboarding=Onboarding(self,civitai_url)
         from .native_admin import NativeAdmin
         self.native_admin=NativeAdmin(self,policy,allow_admin)
+        from .workspace import Workspace
+        self.workspace=Workspace(self)
         from .acquisition import Acquisition
         self.acquisition=Acquisition(self)
         from .artifacts import Artifacts
@@ -45,6 +47,7 @@ class Engine:
     def start(self):
         if any(w and w.is_alive() for w in (self.thread,getattr(self,'cpu_thread',None),getattr(self,'delivery_thread',None),getattr(self,'acquisition_thread',None))):raise Fault('ALREADY_RUNNING','engine worker already running')
         self.stop.clear();self.projection_cursor=''
+        self.workspace.recover()
         self.acquisition.recover()
         self.media.recover()
 
@@ -131,7 +134,7 @@ class Engine:
         self.projection_cursor=rows[-1]['id'] if rows else ''
         for j in rows:
             # Administration is operational audit, never a creative recipe.
-            if j['kind'] in ('native_admin','corpus','onboarding','acquisition','acquisition_batch','mask','censor'):continue
+            if j['kind'] in ('native_admin','native_workspace','corpus','onboarding','acquisition','acquisition_batch','mask','censor'):continue
             feedback=self.repo.feedback(j['id']);reviews=self.repo.reviews(j['id'])
             h=digest({k:j.get(k) for k in ('state','payload','result','outputs','artifact_state','artifacts','native_ids')}|{'feedback':feedback,'reviews':reviews})
             if j.get('projection_hash')==h or j.get('index_retry_at',0)>time.time():continue
@@ -252,6 +255,8 @@ class Engine:
         g=_build_graph(models,{},m,p['prompt'],p['negative_prompt'],p['seed'],p['width'],p['height'],p['steps'],p['cfg'],p['scheduler'],ls)
         return {'recipe_version':'atlas-txt2img-v1','mode':'txt2img','resolved_model':_model_ref(m),'resolved_loras':[{**_model_ref(l),'weight':l['weight']} for l in ls],'seed':p['seed'],'graph':g,'validation':'graph builder only; GPU family acceptance remains required','submit_enabled':self.allow_submit}
     def dispatch(self,op,p,principal,source):
+        from .workspace import OPERATIONS as WORKSPACE_OPERATIONS
+        if op in WORKSPACE_OPERATIONS:return self.workspace.call(op,p,principal,source)
         if op.startswith(('mask.','censor.','media.')):
             return self.media.call(op,p,principal,source)
         if op.startswith('models.acquire.'):

@@ -139,6 +139,7 @@ def main():
                           civitai_url=config.civitai_url,media_config=media)
             engine.startup_mode='standalone'
             engine.connection_id=connection.id if connection else None
+            engine.backend_generation=connection.backend_generation if connection else None
             uvicorn.run(make_app(engine,identities,config.port,config.host,config.container_endpoint),host=config.host,port=config.port,log_level='warning',access_log=False)
     except (OSError,ValueError,Fault) as e:
         p.exit(1,'Atlas startup refused: '+getattr(e,'code',type(e).__name__)+': '+str(e)+'\n')
