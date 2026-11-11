@@ -17,7 +17,7 @@ import atlas_engine
 from atlas_engine.corpus import COLLECTIONS, Corpus, entity_id, point_id
 from atlas_engine.engine import Engine
 from atlas_engine.repository import Repository, dump
-from atlas_engine.state_backup import backup, restore, reconcile, files, points, ro, sha, storage_path
+from atlas_engine.state_backup import backup, restore, reconcile, files, points, ro, sha, storage_path, registry_digest
 from atlas_engine.contracts import SCHEMAS
 
 
@@ -145,15 +145,23 @@ def main():
     # Unknown external effects cannot be cleared by an empty or generic report.
     report=out/'reconciliation.json'
     assessment={k:'synthetic fixture reviewed; no live effects' for k in ('generation','workspace','media','acquisition','projection','uploads')}
-    report.write_text(dump(assessment|{'registry_sha256':sha(restored/'registry.sqlite3'),'external_effects_reconciled':True}))
+    binding={'backup_manifest_sha256':sha(out/'backup'/'manifest.json'),'target_root':str(restored),'external_effects_reconciled':True}
+    report.write_text(dump(assessment|binding|{'registry_logical_sha256':registry_digest(restored)}))
     refuse(lambda:reconcile(restored,report))
     # Simulate an explicit operator resolution only in the synthetic restored DB.
     repo=Repository(restored);repo.update(job['id'],'failed',{'synthetic_reconciliation':'no external operation executed'})
-    report.write_text(dump(assessment|{'registry_sha256':sha(restored/'registry.sqlite3'),'external_effects_reconciled':True}))
+    refuse(lambda:reconcile(restored,report))  # previous assessment is now stale
+    report.write_text(dump(assessment|binding|{'registry_logical_sha256':registry_digest(restored)}))
     state=reconcile(restored,report);assert state['reconciled'] and state['reconciliation_report']==json.loads(report.read_text())
     engine=Engine(restored,None,NoBackend(),NoBackend(),True,corpus_root=restored/'corpus')
     assert not engine.restore_quarantined
     engine.close()  # Do not start activated core against any backend.
+    backup(restored,out/'second-backup')
+    chained=out/'second-restore';chained_state=restore(out/'second-backup',chained)
+    assert not chained_state['reconciled']
+    assert chained_state['previous_restore']['reconciliation_report']==state['reconciliation_report']
+    assert storage_path(chained,str(path))==chained/'artifacts'/'blob'
+    assert raw_image(chained)==raw_image(restored)
     passed('explicit bound reconciliation required; uncertain job prevents activation')
     receipt={'checks':checks,'synthetic':True,'legacy_corpus_migration':False,'native_execution':False,
              'installed_package':str(installed),'collections':manifest['collections'],'network_connections':0}

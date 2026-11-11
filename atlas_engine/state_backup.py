@@ -94,6 +94,16 @@ def integrity(path):
             raise ValueError('SQLite integrity failure: ' + str(path))
 
 
+def registry_digest(root):
+    """Bind the entire committed ledger, including WAL, not just its main file."""
+    h = hashlib.sha256()
+    with closing(ro(Path(root) / 'registry.sqlite3')) as c:
+        c.execute('BEGIN')
+        for line in c.iterdump():
+            h.update(line.encode() + b'\n')
+    return h.hexdigest()
+
+
 class PointReader(pickle.Unpickler):
     # Qdrant local stores PointStruct pickles. Do not execute arbitrary globals
     # merely to inventory an operator-supplied backup.
@@ -138,7 +148,8 @@ def points(root):
 def versions():
     return {'atlas': importlib.metadata.version('atlas-engine'),
             'qdrant-client': importlib.metadata.version('qdrant-client'),
-            'python': list(sys.version_info[:2]), 'sqlite': sqlite3.sqlite_version}
+            'python': list(sys.version_info[:2]), 'sqlite': sqlite3.sqlite_version,
+            'source_modules': {p.name: sha(p) for p in sorted(Path(__file__).parent.glob('*.py'))}}
 
 
 def new_target(source, destination):
@@ -179,10 +190,15 @@ def backup(source, destination):
             safe_path(sidecar)
             if sidecar.exists() and not sidecar.is_file():
                 raise ValueError('nonregular SQLite sidecar')
+        source_files = {}
         for name in selected:
             p = source / name; safe_path(p)
-            if p.is_dir(): files(p)
-            elif not p.is_file(): raise ValueError('nonregular state entry')
+            if p.is_dir():
+                source_files.update({name + '/' + k: v for k, v in files(p).items()})
+            elif p.is_file():
+                if name != 'registry.sqlite3':
+                    source_files[name] = {'bytes': p.stat().st_size, 'sha256': sha(p)}
+            else: raise ValueError('nonregular state entry')
         inventory = points(source)
         integrity(source / 'registry.sqlite3')
         destination.mkdir(mode=0o700)
@@ -198,12 +214,15 @@ def backup(source, destination):
             else: shutil.copyfile(src, dest)
         if points(payload) != inventory:
             raise ValueError('point preimage differs')
+        copied_files = files(payload)
+        if {k: v for k, v in copied_files.items() if k != 'registry.sqlite3'} != source_files:
+            raise ValueError('copied state file bytes differ from source')
         manifest = {'format': 'atlas-offline-backup-v1', 'versions': versions(),
                     'source_root': str(source), 'corpus_format': FORMAT,
                     'consistency': 'service.lock + corpus/owner.lock; stopped single owner',
                     'included': selected, 'excluded_root_entries': sorted(p.name for p in source.iterdir() if p.name not in INCLUDED),
                     'external_files_included': False, 'configuration_secrets_included': False,
-                    'collections': inventory, 'files': files(payload)}
+                    'collections': inventory, 'files': copied_files}
         # Manifest is the completion boundary, written only after durable payload.
         sync_tree(payload)
         write_json(destination / 'manifest.json', manifest)
@@ -237,13 +256,16 @@ def restore(source, destination):
     # Preserve prior location maps across a backup of an already restored root.
     prior = destination / MARKER
     roots = [manifest['source_root']]
+    previous = None
     if prior.exists():
-        roots += json.loads(prior.read_text()).get('storage_source_roots', [])
+        previous = json.loads(prior.read_text())
+        roots += previous.get('storage_source_roots', [])
         prior.unlink()
     write_json(prior, {'format': 'atlas-restored-state-v1', 'reconciled': False,
                       'backup_manifest_sha256': sha(source / 'manifest.json'),
                       'storage_source_roots': sorted(set(roots)),
                       'storage_target_root': str(destination),
+                      'previous_restore': previous,
                       'preimage_verified': True})
     (destination / 'service.lock').touch(mode=0o600, exist_ok=False)
     sync_tree(destination)
@@ -275,11 +297,15 @@ def storage_path(root, value):
 
 
 def reconcile(root, report_path):
+    root = safe_path(root)
     with offline(root):
         state = restore_state(root)
         if not state or state['reconciled']: raise ValueError('quarantined restore required')
         report = json.loads(safe_path(report_path).read_text())
-        if report.get('registry_sha256') != sha(Path(root) / 'registry.sqlite3') or report.get('external_effects_reconciled') is not True:
+        if (report.get('registry_logical_sha256') != registry_digest(root)
+                or report.get('backup_manifest_sha256') != state['backup_manifest_sha256']
+                or report.get('target_root') != str(root)
+                or report.get('external_effects_reconciled') is not True):
             raise ValueError('report must bind current registry and confirm reconciliation')
         for section in ('generation', 'workspace', 'media', 'acquisition', 'projection', 'uploads'):
             if not isinstance(report.get(section), str) or not report[section].strip():

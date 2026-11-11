@@ -38,7 +38,8 @@ locally; preimage verification must precede them. Existing-request replay return
 the durable receipt without executing the effect.
 
 `atlas-state reconcile ROOT REPORT.json` is an offline operator action holding
-both locks. Report must bind the current registry hash, contain nonempty explicit
+both locks. Report must bind the current committed logical registry hash (including
+WAL), backup manifest hash and exact target root, contain nonempty explicit
 assessments for generation/workspace/media/acquisition/projection/uploads and
 confirm external effects reconciled. Nonterminal external jobs and ambiguous
 uploads must first be resolved by a separately reviewed reconciliation procedure;
@@ -52,3 +53,26 @@ job/events/upload BLOB; artifact/prior bytes; owner refusal; WAL backup; exact r
 preimage before repair; restore elsewhere; local public reads/idempotent replay,
 no network or worker replay; overwrite/traversal/symlink/corruption refusal.
 Legacy/private corpus migration and native processor execution remain unaccepted.
+
+## Commands
+
+Run with the pinned installed package, after the owner has stopped:
+
+```sh
+atlas-state backup /absolute/stopped-root /absolute/NEW-backup
+atlas-state restore /absolute/NEW-backup /absolute/NEW-root
+# Configure the SAME connection binding and new private client credentials
+# separately. Starting Atlas now permits local reads/known-intent receipt replay.
+atlas-state reconcile /absolute/NEW-root /absolute/operator-report.json
+# Only after successful reconciliation, restart Atlas to activate admission.
+```
+
+The private operator report has `target_root`, `backup_manifest_sha256` from
+restore-state.json, `registry_logical_sha256`, `external_effects_reconciled: true`,
+and nonempty string assessments named `generation`, `workspace`, `media`,
+`acquisition`, `projection`, `uploads`. Compute the WAL-aware ledger binding with
+the installed `atlas_engine.state_backup.registry_digest(Path(root))` while the
+daemon is stopped. Review native queue/receipts/workspace revisions, uploads,
+worker results and projection delivery externally before attesting; matching
+content alone does not resolve an unknown effect. This tool has no command that
+silently marks unknown jobs terminal. Retain the report privately.
