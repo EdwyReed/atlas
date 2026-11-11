@@ -1,6 +1,6 @@
 # Atlas
 
-Standalone headless Atlas, development package 0.4.0.dev2. The canonical corpus is embedded Qdrant; operational state is SQLite. HTTP, Streamable HTTP MCP and a thin CLI share the existing Engine dispatch. Hermes and InvokeAI are optional clients/backend integrations, not startup dependencies.
+Standalone headless Atlas, development package 0.4.0.dev3. The canonical corpus is embedded Qdrant; operational state is SQLite. HTTP, Streamable HTTP MCP and a thin CLI share the existing Engine dispatch. Hermes and InvokeAI are optional clients/backend integrations, not startup dependencies.
 
 This is a development package, not completion of the full Atlas product. See [SPEC.md](SPEC.md) and [OPERATIONS.json](OPERATIONS.json) for retained capabilities and exercised scope. No UI is delivered.
 
@@ -75,7 +75,7 @@ For local semantic encoding, install `atlas-engine[semantic]` from this source a
 
 ## Native workspace prompt subset
 
-The registry currently has 112 operations (counted from the shared input schemas). Listing an operation does not certify its backend; `OPERATIONS.json` records the exercised boundary.
+The registry currently has 113 operations (counted from the shared input schemas). Listing an operation does not certify its backend; `OPERATIONS.json` records the exercised boundary.
 
 `projects.get` and `projects.savePrompt` implement a narrow InvokeAI 7 split-v4 codec: an existing layered workspace (`settingsLayering=1`), canvas compatibility at most v2 and an explicitly selected `generate` widget. A save changes only `widgetInstances[id].state.values.positivePrompt`; opaque content and all other workspace values are preserved. This does not create workspaces, migrate documents, resolve inherited defaults, compile workflows or support arbitrary Canvas editing.
 
@@ -89,7 +89,7 @@ From the source directory, using the environment where the package is installed:
 
 ```sh
 /absolute/venv/bin/python -I -B verification/acceptance.py \
-  --wheel /absolute/path/to/atlas_engine-0.4.0.dev2-py3-none-any.whl \
+  --wheel /absolute/path/to/atlas_engine-0.4.0.dev3-py3-none-any.whl \
   --out /absolute/new/private-acceptance-directory
 ```
 
@@ -105,6 +105,22 @@ PACKAGE_ROOT=$(/absolute/venv/bin/python -I -c \
 ```
 
 An explicit `--package-root` selects installed/built modules; without it this fixture runner selects the source tree. Its checks cover HTTP/MCP saves and readback, opaque preservation, independent revisions, stale/concurrent CAS, scoped request conflicts, restart, lost ACK, durable ACK reconciliation and intervening edits. It does not import or start InvokeAI.
+
+## Native queue admission
+
+`generation.submitGraph` accepts `connection_id`, `backend_generation`, `request_id`, a native `graph` and optional `runs` (default 1, maximum 4). Configure a NEW isolated root with a pinned connection, `enable_writes: true`, and a policy file containing `{"accepted_modes":["native_graph"]}`. This explicit policy enables operator-supplied graphs; it does not validate model recipes or authorize GPU work. The original generation/image recipes are retained separately.
+
+The existing generation ledger durably saves scope, graph ID, retry key, batch defaults and complete native receipt. Exact request replay/restart never repeats a fenced enqueue. Lost ACK recovery reads the pinned native receipt endpoint; 404 stays unknown, not permission to submit again. Read jobs with `generation.get`, refresh using `observer.reconcile`, and cancel known receipt IDs with `generation.cancel`. Inspect job state even in a successful operation envelope. Native receipts are currently left unacknowledged, so upstream receipt capacity is a documented limit.
+
+Repeat queue acceptance only against a disposable loopback backend:
+
+```sh
+/absolute/venv/bin/python -I -B verification/native_queue.py \
+  --native-url http://127.0.0.1:DISPOSABLE_PORT \
+  --package-root "$PACKAGE_ROOT" --out /absolute/new/private-queue-directory
+```
+
+This runner submits integer graphs, cancels its exact items and injects lost replies/process crashes. Do not point it at a live service. The private native harness exercised original router/service/SQLite admission and cancellation with a fixture graph codec, not native graph validation/execution, full bootstrap/auth/migrations or GPU jobs. See SPEC.md for the exact boundary.
 
 ## CPU Docker delivery
 

@@ -127,7 +127,7 @@ class Repository:
                 c.executemany('insert or ignore into native_images values(?,?)',[(name,jid) for name in d['outputs']])
             c.execute('insert into events(job_id,kind,data,at) values(?,?,?,?)',(jid,event,dump({'state':s,'keys':sorted((changes or {}).keys())}),now))
             return self.decode(c.execute('select * from jobs where id=?',(jid,)).fetchone()),True
-    def acknowledge_submission(self,jid,ids,batch_id):
+    def acknowledge_submission(self,jid,ids,batch_id,receipt=None):
         """Attach ACK identity without overwriting newer observer/control state.
 
         The decision and write share a SQLite writer transaction, including across
@@ -138,6 +138,7 @@ class Repository:
             r=c.execute('select * from jobs where id=?',(jid,)).fetchone()
             if not r:raise Fault('NOT_FOUND','job not found')
             d=json.loads(r['data']);state=r['state']
+            if receipt is not None:d['native_receipt']=receipt
             d['native_ids']=sorted(set(d.get('native_ids',[])) | set(ids))
             if batch_id is not None:d['native_batch_id']=batch_id
             # Only an unobserved submission advances on ACK. Preserve observing,

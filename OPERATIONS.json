@@ -1,6 +1,7 @@
 {
   "scope": "Complete current input-schema registry. Statuses distinguish core synthetic checks from the narrow workspace HTTP fixture; retained does not mean accepted. See SPEC.md for unimplemented target families.",
-  "operation_count": 112,
+  "operation_count": 113,
+  "queue_native_boundary": "Original pinned queue router/service/batch arithmetic/SQLite admission and cancellation with fixture graph codec and synthetic dependencies; no native graph execution, full bootstrap/auth/migrations or GPU acceptance. See SPEC.md.",
   "workspace_native_boundary": "Additionally exercised against pinned InvokeAI projects router/original service/SQLite with synthetic caller/config/service wiring and metadata-created schema. Full-server bootstrap/auth/migrations/UI and other codecs remain unverified.",
   "operations": {
     "admin.get": "retained_not_exercised",
@@ -42,8 +43,8 @@
     "evidence": "retained_not_exercised",
     "feedback.list": "retained_not_exercised",
     "feedback.record": "retained_not_exercised",
-    "generation.cancel": "retained_not_exercised",
-    "generation.get": "retained_not_exercised",
+    "generation.cancel": "exercised_isolated_native_queue_fixture_graph",
+    "generation.get": "exercised_isolated_native_queue_fixture_graph",
     "generation.plan": "retained_not_exercised",
     "generation.records.create": "retained_not_exercised",
     "generation.records.delete": "retained_not_exercised",
@@ -53,6 +54,7 @@
     "generation.records.update": "retained_not_exercised",
     "generation.retry": "retained_not_exercised",
     "generation.submit": "retained_not_exercised",
+    "generation.submitGraph": "exercised_isolated_native_queue_fixture_graph",
     "generation.wait": "retained_not_exercised",
     "image.metadata": "retained_not_exercised",
     "images.list": "retained_not_exercised",

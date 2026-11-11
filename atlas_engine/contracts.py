@@ -79,6 +79,12 @@ class Plan(Resolve):
     seed: int = Field(default=0,ge=0,le=2147483647)
     scheduler: Literal['euler','euler_a','dpmpp_2m','dpmpp_2m_sde','ddim'] = 'euler'
 class Submit(Plan): request_id: str = Field(min_length=1,max_length=128)
+class GraphSubmit(Strict):
+    connection_id: str = Field(min_length=1,max_length=128)
+    backend_generation: str = Field(min_length=1,max_length=128)
+    request_id: str = Field(min_length=1,max_length=128)
+    graph: dict
+    runs: int = Field(default=1,ge=1,le=4)
 class BatchSubmit(Submit): runs: int = Field(default=2,ge=1,le=4)
 class Feedback(Strict):
     request_id: str = Field(min_length=1,max_length=128)
@@ -177,7 +183,7 @@ SCHEMAS = {
     'status':Empty,'capabilities':Empty,'enrich':Creative,
     'dream.submit':Dream,'dream.get':Ref,'dream.cancel':Ref,
     'batch.submit':BatchSubmit,'batch.get':Ref,
-    'generation.plan':Plan,'generation.submit':Submit,'generation.get':Ref,'generation.wait':WaitRef,'generation.retry':RetryRef,'generation.cancel':Ref,
+    'generation.plan':Plan,'generation.submit':Submit,'generation.submitGraph':GraphSubmit,'generation.get':Ref,'generation.wait':WaitRef,'generation.retry':RetryRef,'generation.cancel':Ref,
     'jobs.list':ListQuery,'jobs.page':ListQuery,'feedback.record':Feedback,'feedback.list':Ref,
     'search':Search,'evidence':Evidence,'catalog.list':ModelQuery,'catalog.resolve':Resolve,
     'catalog.get':NativeRef,'queue.status':Empty,'observer.reconcile':Empty,

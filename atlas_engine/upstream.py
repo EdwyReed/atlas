@@ -40,6 +40,10 @@ class Invoke(JsonHTTP):
         return out
     def submit(self,graph,jid):
         return self.call('POST',self.qp+'/enqueue_batch',{'batch':{'batch_id':jid,'graph':graph,'runs':1,'origin':'atlas-engine:'+jid},'prepend':False})
+    def submit_prepared(self,body):
+        return self.call('POST',self.qp+'/enqueue_batch',body)
+    def enqueue_receipt(self,key):
+        return self.call('GET',self.qp+'/enqueue_batch/receipt?idempotency_key='+quote(key,safe=''))
     def cancel(self,nid):return self.call('PUT',self.qp+'/i/'+str(int(nid))+'/cancel')
     def upload(self,raw,filename):
         r=self.http.post('/api/v1/images/upload',params={'image_category':'user','is_intermediate':'true'},files={'file':(filename,raw,'image/png' if filename.endswith('.png') else 'image/jpeg')})

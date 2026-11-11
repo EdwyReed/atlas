@@ -27,6 +27,8 @@ class Engine:
         self.native_admin=NativeAdmin(self,policy,allow_admin)
         from .workspace import Workspace
         self.workspace=Workspace(self)
+        from .native_queue import NativeQueue
+        self.native_queue=NativeQueue(self)
         from .acquisition import Acquisition
         self.acquisition=Acquisition(self)
         from .artifacts import Artifacts
@@ -255,6 +257,7 @@ class Engine:
         g=_build_graph(models,{},m,p['prompt'],p['negative_prompt'],p['seed'],p['width'],p['height'],p['steps'],p['cfg'],p['scheduler'],ls)
         return {'recipe_version':'atlas-txt2img-v1','mode':'txt2img','resolved_model':_model_ref(m),'resolved_loras':[{**_model_ref(l),'weight':l['weight']} for l in ls],'seed':p['seed'],'graph':g,'validation':'graph builder only; GPU family acceptance remains required','submit_enabled':self.allow_submit}
     def dispatch(self,op,p,principal,source):
+        if op=='generation.submitGraph':return self.native_queue.submit_graph(p,principal,source)
         from .workspace import OPERATIONS as WORKSPACE_OPERATIONS
         if op in WORKSPACE_OPERATIONS:return self.workspace.call(op,p,principal,source)
         if op.startswith(('mask.','censor.','media.')):
@@ -333,6 +336,8 @@ class Engine:
         if op=='generation.retry':
             if not self.allow_submit:raise Fault('SUBMISSION_DISABLED','native writes disabled')
             old=self.require_kind(p['job_id'],'generation')
+            self.native_queue.check(old)
+            if old.get('plan',{}).get('mode')=='native_graph':raise Fault('RETRY_UNSAFE','explicit new graph intent requires a new submitGraph request_id')
             if old['state'] not in ('failed','canceled'):raise Fault('RETRY_UNSAFE','only authoritative failed/canceled jobs may be retried; unknown ACK never replays')
             cp={**old['payload'],'request_id':p['request_id']}
             if cp['mode'] not in self.accepted_modes:raise Fault('MODE_NOT_ACCEPTED','mode not accepted')
@@ -340,7 +345,7 @@ class Engine:
             if existing:
                 if existing.get('retry_of')!=old['id']:raise Fault('IDEMPOTENCY_CONFLICT','retry request belongs to another lineage')
                 return existing
-            j,_=self.repo.reserve(principal,source,p['request_id'],'generation',cp,{'plan':self.plan(cp),'native_ids':[],'retry_of':old['id']})
+            j,_=self.repo.reserve(principal,source,p['request_id'],'generation',cp,{'plan':self.plan(cp),'native_ids':[],'native_scope':self.native_queue.scope(),'retry_of':old['id']})
             if j.get('retry_of')!=old['id']:raise Fault('IDEMPOTENCY_CONFLICT','retry lineage differs')
             return self.execute_submission(j)
         if op=='dream.cancel':
@@ -353,11 +358,12 @@ class Engine:
             existing=self.repo.request(principal,p['request_id'],'generation',p)
             if existing:return existing
             if p['mode'] not in self.accepted_modes:raise Fault('MODE_NOT_ACCEPTED','mode not accepted in server policy; separate family/mask/GPU acceptance required')
-            plan=self.plan(p);j,created=self.repo.reserve(principal,source,p['request_id'],'generation',p,{'plan':plan,'native_ids':[]})
+            plan=self.plan(p);j,created=self.repo.reserve(principal,source,p['request_id'],'generation',p,{'plan':plan,'native_ids':[],'native_scope':self.native_queue.scope()})
             if not created:return j
             return self.execute_submission(j)
         if op=='generation.cancel':
             j=self.require_kind(p['job_id'],'generation')
+            self.native_queue.check(j)
             if not self.allow_submit:raise Fault('SUBMISSION_DISABLED','native cancel disabled in read-only candidate')
             if j['state'] in TERMINAL:return j
             if j['state']=='queued':
@@ -366,7 +372,10 @@ class Engine:
                 j=canceled
             if not j.get('native_ids'):raise Fault('ACK_UNKNOWN','no native ID; reconcile before targeted cancel')
             self.repo.update(j['id'],changes={'cancel_requested':True},event='generation.cancel_intent')
-            for nid in j['native_ids']:self.invoke.cancel(nid)
+            for nid in j['native_ids']:
+                item=self.invoke.item(nid)
+                if item.get('item_id')!=nid or (j.get('native_batch_id') and item.get('batch_id')!=j['native_batch_id']):raise Fault('NATIVE_IDENTITY_MISMATCH','native item no longer matches durable receipt')
+                self.invoke.cancel(nid)
             self.reconcile();return self.repo.get(j['id'])
         if op=='artifact.list':return self.artifacts.list(p['job_id'])
         if op=='artifact.fetch':return self.artifacts.fetch(p['job_id'],p['image_name'])
@@ -457,13 +466,14 @@ class Engine:
         if not self.allow_submit:raise Fault('SUBMISSION_DISABLED','native writes disabled')
         if j['state']=='queued':
             if j['payload'].get('mode')=='upscale':self.validate_pixel_source(j['payload']['image_name'])
-            if j['payload'].get('mode','txt2img') not in self.accepted_modes:raise Fault('MODE_NOT_ACCEPTED','server policy no longer accepts this mode')
-        current,claimed=self.repo.update(j['id'],'submitting',{'render_state':'ack_unknown'},expected={'queued'},event='submission.fenced')
+            if j['plan'].get('mode',j['payload'].get('mode','txt2img')) not in self.accepted_modes:raise Fault('MODE_NOT_ACCEPTED','server policy no longer accepts this mode')
+        self.native_queue.check(j)
+        prepared=j.get('prepared_submission') or self.native_queue.prepare(j)
+        current,claimed=self.repo.update(j['id'],'submitting',{'render_state':'ack_unknown','prepared_submission':prepared,'native_scope':j.get('native_scope',self.native_queue.scope())},expected={'queued'},event='submission.fenced')
         if not claimed:return current
         try:
-            ack=self.invoke.submit(j['plan']['graph'],j['id']);ids=ack.get('item_ids',[])
-            if not ids or any(type(x) is not int or x<1 for x in ids):raise Fault('ACK_UNKNOWN','native acknowledgment contains no valid IDs')
-            return self.repo.acknowledge_submission(j['id'],ids,ack.get('batch',{}).get('batch_id'))
+            ack=self.invoke.submit_prepared(prepared)
+            return self.native_queue.record(current,ack)
         except Exception:
             return self.repo.update(j['id'],'ack_unknown',{'error':{'code':'ACK_UNKNOWN','message':'native submission acknowledgment uncertain; will reconcile, never auto-resubmit'}},expected={'submitting'},event='submission.ambiguous')[0]
     def reconcile(self):
@@ -471,26 +481,41 @@ class Engine:
             return self.repo.health('observer',{'ok':False,'error':'INVOKE_UNCONFIGURED','configured':False})
         with self.observer_lock:
             try:
+                self.native_queue.recover_receipts()
                 items=self.invoke.inventory()
                 if not isinstance(items,list):raise Fault('QUEUE_SCHEMA','list_all must return array')
                 seen=set()
+                receipt_jobs={}
+                for known in self.repo.iter_jobs('generation'):
+                    if known.get('native_scope')==self.native_queue.scope() and known.get('native_receipt'):
+                        for native_id in known.get('native_ids',[]):receipt_jobs[native_id]=known
                 for item in items:
                     nid=item['item_id'];seen.add(nid);jid=self.repo.observed_job(nid)
+                    known=receipt_jobs.get(nid)
+                    if known:
+                        if item.get('batch_id')!=known.get('native_batch_id'):raise Fault('NATIVE_IDENTITY_MISMATCH','observed item differs from receipt')
+                        jid=known['id']
                     if not jid:
                         # Link engine ACK only with both persisted batch identity and graph identity.
                         origin=item.get('origin') or '';possible=origin.removeprefix('atlas-engine:') if origin.startswith('atlas-engine:') else ''
                         try:candidate=self.repo.get(possible) if possible else None
                         except Fault:candidate=None
-                        if candidate and item.get('batch_id')==possible and item.get('session',{}).get('graph',{}).get('id')==candidate.get('plan',{}).get('graph',{}).get('id'):jid=possible
+                        if candidate and candidate.get('prepared_submission'):
+                            # Origin is not a receipt. Wait for exact-ID recovery;
+                            # do not invent an external job for our uncertain intent.
+                            continue
+                        if candidate and not candidate.get('prepared_submission') and item.get('batch_id')==possible and item.get('session',{}).get('graph',{}).get('id')==candidate.get('plan',{}).get('graph',{}).get('id'):jid=possible
+
                         if not jid:
                             origin=self.native_origins.get(item.get('user_id'),{})
                             owner=origin.get('principal','native-observer');project=origin.get('project',item.get('project'))
-                            j,_=self.repo.reserve(owner,'invokeai-external',f'native:{self.invoke.base}:{self.invoke.queue}:{nid}','generation',{'native_item_id':nid,'project':project},{'native_ids':[nid],'provenance':'observed_external','author':'unknown','upstream_user_id':item.get('user_id')})
+                            j,_=self.repo.reserve(owner,'invokeai-external',f'native:{self.native_queue.scope()}:{self.invoke.base}:{nid}','generation',{'native_item_id':nid,'project':project},{'native_scope':self.native_queue.scope(),'native_ids':[nid],'provenance':'observed_external','author':'unknown','upstream_user_id':item.get('user_id')})
                             jid=j['id']
+                    self.native_queue.check(self.repo.get(jid))
                     self.repo.native(item,jid)
                     j=self.repo.get(jid);ids=sorted(set(j.get('native_ids',[])+[nid]));previous=j.get('native_items',{});previous[str(nid)]=self.compact(item)
                     states=[v['status'] for v in previous.values()]
-                    if not states or any(x not in ('completed','failed','canceled') for x in states):state='observing'
+                    if len(previous)<len(ids) or not states or any(x not in ('completed','failed','canceled') for x in states):state='observing'
                     elif all(x=='completed' for x in states):state='succeeded'
                     elif all(x=='canceled' for x in states):state='canceled'
                     elif 'completed' in states:state='partially_succeeded'
