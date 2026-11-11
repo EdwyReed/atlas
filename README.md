@@ -1,6 +1,6 @@
 # Atlas
 
-Standalone headless Atlas, development package 0.4.0.dev6. The canonical corpus is embedded Qdrant; operational state is SQLite. HTTP, Streamable HTTP MCP and a thin CLI share the existing Engine dispatch. Hermes and InvokeAI are optional clients/backend integrations, not startup dependencies.
+Standalone headless Atlas, development package 0.4.0.dev7. The canonical corpus is embedded Qdrant; operational state is SQLite. HTTP, Streamable HTTP MCP and a thin CLI share the existing Engine dispatch. Hermes and InvokeAI are optional clients/backend integrations, not startup dependencies.
 
 This is a development package, not completion of the full Atlas product. See [SPEC.md](SPEC.md) and [OPERATIONS.json](OPERATIONS.json) for retained capabilities and exercised scope. No UI is delivered.
 
@@ -120,13 +120,21 @@ Repeat queue acceptance only against a disposable loopback backend:
   --package-root "$PACKAGE_ROOT" --out /absolute/new/private-queue-directory
 ```
 
-This runner submits integer graphs, cancels its exact items and injects lost replies/process crashes. Do not point it at a live service. The private native harness exercised original router/service/SQLite admission and cancellation with a fixture graph codec, not native graph validation/execution, full bootstrap/auth/migrations or GPU jobs. See SPEC.md for the exact boundary.
+This runner submits integer graphs, cancels its exact items and injects lost replies/process crashes. Do not point it at a live service. Its earlier private native harness exercised original router/service/SQLite admission and cancellation with a fixture graph codec. A separate dev7 CPU probe now executes the original Graph validation, integer invocation and processor/runner with synthetic config/caller/services and a Python 3.11 shim. This is partial processor acceptance, not full bootstrap/auth/migrations or GPU/model jobs.
+
+In dev7, HTTP `generation.get` and MCP `generation_get` expose the observed result in `native_items["<item_id>"].native_results.entries`: exact prepared/source node IDs, native type, status, and bounded integer/boolean value. The real no-model graph returns `integer_output` value `17` through Atlas, including after restart, history-missing, exact replay and native shutdown. Values live in the existing ledger, with native session/scope/provenance retained. At most 64 entries per item; unsupported types and omissions are explicit. Strings/opaque DTO fields are not copied. Existing `outputs` image names and the artifact pipeline are unchanged. See [SPEC.md](SPEC.md) for the contract.
+
+```sh
+/absolute/venv/bin/python -I -B verification/native_results.py --out /new/private/results-evidence
+```
+
+This narrow installed regression uses synthetic DTOs and PNG bytes; it is not image-model execution evidence.
 
 ## CPU Docker delivery
 
 [Build and isolated bridge run](container/README.md) documents the non-root CPU image, private mounted configuration, writable state volume and repeatable `--docker-image` boundary acceptance. Its base digest and hashed dependency inputs are pinned independently of the package version ranges. HTTP, real MCP and the installed host CLI were exercised against the built image on clean volumes, including auth negatives, duplicate ownership refusal and restart persistence.
 
-The current CPU Docker image was rebuilt and accepted for 0.4.0.dev6: installed source/wheel/image module equality, real HTTP/MCP/host CLI, owner refusal and restart persistence. The installed `atlas-state` executable also completed populated synthetic offline backup→new-root restore inside the non-root read-only image with networking disabled, exact durable bytes/inventory comparison, shared-lock refusal and quarantine/reconciliation checks; see [BACKUP.md](BACKUP.md). Full legacy migration, full native server execution, GPU jobs and packaged media inference remain unaccepted. Source licensing/third-party redistribution, SBOM and release provenance still need release review before publication. No live deployment or public service is part of this delivery.
+The retained CPU Docker image is 0.4.0.dev6 and does not contain the dev7 typed-result delta; no image rebuild was performed for dev7. It was rebuilt and accepted for dev6: installed source/wheel/image module equality, real HTTP/MCP/host CLI, owner refusal and restart persistence. The installed `atlas-state` executable also completed populated synthetic offline backup→new-root restore inside the non-root read-only image with networking disabled, exact durable bytes/inventory comparison, shared-lock refusal and quarantine/reconciliation checks; see [BACKUP.md](BACKUP.md). Full legacy migration, full native server execution, GPU jobs and packaged media inference remain unaccepted. Source licensing/third-party redistribution, SBOM and release provenance still need release review before publication. No live deployment or public service is part of this delivery.
 
 ## Populated literal search and numerical creative discovery
 

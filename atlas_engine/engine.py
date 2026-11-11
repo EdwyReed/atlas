@@ -535,7 +535,24 @@ class Engine:
                             jid=j['id']
                     self.native_queue.check(self.repo.get(jid))
                     self.repo.native(item,jid)
-                    j=self.repo.get(jid);ids=sorted(set(j.get('native_ids',[])+[nid]));previous=j.get('native_items',{});previous[str(nid)]=self.compact(item)
+                    j=self.repo.get(jid);ids=sorted(set(j.get('native_ids',[])+[nid]));previous=j.get('native_items',{})
+                    plan=j.get('plan',{})
+                    allowed_nodes=None
+                    if plan.get('mode')=='native_graph':
+                        if (nid not in j.get('native_ids',[]) or
+                                item.get('session',{}).get('graph',{}).get('id')!=plan['graph'].get('id')):
+                            raise Fault('NATIVE_IDENTITY_MISMATCH','result item/graph differs from submitted intent')
+                        allowed_nodes=plan['graph']['nodes']
+                    observed=self.compact(item,allowed_nodes)
+                    old=previous.get(str(nid),{})
+                    # Native history may be stale or stripped after completion. Keep
+                    # the already observed terminal receipt/result, never invent it.
+                    if plan.get('mode')=='native_graph' and old.get('status') in ('completed','failed','canceled'):
+                        if observed.get('status')!=old['status']:
+                            observed=old
+                        elif old.get('native_results',{}).get('total',0):
+                            observed['native_results']=old['native_results']
+                    previous[str(nid)]=observed
                     states=[v['status'] for v in previous.values()]
                     if len(previous)<len(ids) or not states or any(x not in ('completed','failed','canceled') for x in states):state='observing'
                     elif all(x=='completed' for x in states):state='succeeded'
@@ -554,7 +571,7 @@ class Engine:
             except Exception as e:
                 return self.repo.health('observer',{'ok':False,'at':time.time(),'error':getattr(e,'code',type(e).__name__),'mode':'item_ids+batched-items_by_ids'})
     @staticmethod
-    def compact(item):
+    def compact(item, result_nodes=None):
         d={k:item.get(k) for k in ('item_id','status','status_sequence','batch_id','origin','session_id','created_at','updated_at','error_type')}
         session=item.get('session') or {};graph=session.get('graph') or {};nodes=graph.get('nodes') or {}
         results=session.get('results') or {};out=[]
@@ -564,6 +581,9 @@ class Engine:
             # Only final, non-intermediate nodes. Never index inpaint input/mask or intermediate images as output.
             if n is not None and n.get('is_intermediate',True)==False and isinstance(r,dict):
                 if isinstance(r.get('image'),dict) and isinstance(r['image'].get('image_name'),str):out.append(r['image']['image_name'])
+        if result_nodes is not None:
+            from .native_results import snapshot
+            d['native_results']=snapshot(session,result_nodes)
         d['outputs']=out;d['graph_id']=graph.get('id');return d
     @staticmethod
     def outputs(items):return sorted({x for i in items.values() for x in i['outputs']})
