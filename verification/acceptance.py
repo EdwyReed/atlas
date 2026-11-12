@@ -204,6 +204,13 @@ def main():
                  subprocess.run(owner_command, cwd=out, env=env, capture_output=True, text=True, timeout=20))
         assert owner.returncode != 0 and 'another process owns' in owner.stderr
         passed('second daemon and independent Qdrant owner refused')
+        assert {'workflows.schema', 'workflows.run'} <= set(schemas)
+        workflow_ref = {'connection_id': 'absent', 'backend_generation': 'synthetic', 'workflow_id': 'absent'}
+        for name, args in [('workflows.schema', workflow_ref),
+                           ('workflows.run', workflow_ref | {'request_id': 'workflow-unconfigured',
+                            'version_semantics': 'latest_at_execution', 'workflow_inputs': {}, 'return_key': 'result'})]:
+            assert op(name, args)['error']['code'] == 'INVOKE_UNCONFIGURED'
+        passed('current workflow public schemas present; missing backend refused without native execution')
         assert op('catalog.list')['error']['code'] == 'INVOKE_UNCONFIGURED'
         assert op('enrich', {'tags': ['literal']})['error']['code'] == 'VOCABULARY_UNAVAILABLE'
         passed('optional backends fail explicitly without fallback')

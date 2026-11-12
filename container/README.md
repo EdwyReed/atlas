@@ -92,7 +92,7 @@ The runner removes only its owned containers/network/volumes, including on failu
 ```sh
 /absolute/venv/bin/python -I -B verification/acceptance.py \
   --docker-image atlas-core:cpu-slice \
-  --wheel /absolute/path/to/atlas_engine-0.4.0.dev6-py3-none-any.whl \
+  --wheel /absolute/path/to/atlas_engine-0.4.0.dev10-py3-none-any.whl \
   --out /absolute/new/private-container-acceptance-directory
 ```
 
@@ -101,12 +101,12 @@ exact create command and port bindings), `container.log`, and `cleanup.json`.
 The daemon uses the image's installed `atlas` entrypoint, not source mounts. No
 external backend is configured or invoked; unlike self-host mode, Docker mode does
 not install a Python child egress audit hook. The ordinary non-Docker acceptance
-continues to exercise that guard. This is core corpus acceptance, not a full legacy
+continues to exercise that guard. Current workflow public schemas and missing-backend refusal are also checked; no native workflow executes. This is core corpus acceptance, not a full legacy
 operation/backend, populated migration/restore, inference, release or SBOM review.
 
 ## Populated offline backup/restore in the installed image
 
-The dev6 CPU image also passed the existing populated synthetic runner with
+The dev10 CPU image also passed the existing populated synthetic runner with
 `--cli`: the installed `atlas-state` executable performs the primary backup and
 restore, including refusal while the shared service/corpus locks are held. The
 same runner checks raw five-collection preimages, WAL/ledger/upload BLOBs,

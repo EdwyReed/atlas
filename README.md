@@ -103,7 +103,7 @@ Existing byte/pixel/batch/storage limits and CPU thread/RSS/deadline caps remain
   --upstream /absolute/anime-mosaic --model /absolute/ntd11.pt
 ```
 
-The installed dev8 runner exercised real CPU inference on safe synthetic pixels without detections, original-byte preservation, HTTP/MCP artifact/hash/dimensions and restart/replay. It separately labels its slow-child fixture for latency/capacity/timeout/stop/crash checks. Synthetic no-detection input proves execution, not detector quality or detected-region rendering. No live service, GPU job or model download was used. Source, wheel and installed Python module sets/bytes must match before acceptance. Docker remains dev6, without dev7/dev8/dev9 changes.
+The installed dev8 runner exercised real CPU inference on safe synthetic pixels without detections, original-byte preservation, HTTP/MCP artifact/hash/dimensions and restart/replay. It separately labels its slow-child fixture for latency/capacity/timeout/stop/crash checks. Synthetic no-detection input proves execution, not detector quality or detected-region rendering. No live service, GPU job or model download was used. Source, wheel and installed Python module sets/bytes must match before acceptance. Docker now packages dev10; container media inference still requires an operator-supplied runtime and weights and is not accepted.
 
 ## Optional standalone CPU mask
 
@@ -127,7 +127,7 @@ Repeat installed acceptance with an explicitly supplied NEW private backend and 
   --out /new/private/mask-evidence --backend /absolute/private-mask
 ```
 
-The dev9 synthetic object acceptance establishes actual CPU model execution, binary polarity, candidate artifacts, prior refusals, restart/cache expiry and original-byte preservation, not broad segmentation quality, EXIF/alpha image-suite acceptance or native Canvas integration. Weights/dependencies/licensing remain operator responsibilities; Docker stays dev6.
+The dev9 synthetic object acceptance establishes actual CPU model execution, binary polarity, candidate artifacts, prior refusals, restart/cache expiry and original-byte preservation, not broad segmentation quality, EXIF/alpha image-suite acceptance or native Canvas integration. Weights/dependencies/licensing remain operator responsibilities; Docker packages dev10; container mask inference is not accepted.
 
 ## Native workspace prompt subset
 
@@ -145,7 +145,7 @@ From the source directory, using the environment where the package is installed:
 
 ```sh
 /absolute/venv/bin/python -I -B verification/acceptance.py \
-  --wheel /absolute/path/to/atlas_engine-0.4.0.dev6-py3-none-any.whl \
+  --wheel /absolute/path/to/atlas_engine-0.4.0.dev10-py3-none-any.whl \
   --out /absolute/new/private-acceptance-directory
 ```
 
@@ -210,13 +210,13 @@ Read/poll with `generation.get` / `generation.wait`; MCP tools are `workflows_sc
 
 Intent binds scope, native ID, literal inputs, return key and version semantics before the single fenced POST. Exact replay reads the saved receipt without preflight/enqueue; changed arguments conflict. Lost enqueue ACK uses existing native receipt recovery, never blind retry. Native controls descendants; Atlas does not adopt child IDs into the root receipt or store another workflow library. A new explicit run needs a new request ID, including after a native failure. Completed results survive Atlas/native restart and native unavailability once observed. Unobserved results lost from native history cannot be reconstructed.
 
-Installed dev10 acceptance exercised authenticated HTTP and SDK MCP integer17, original native child/return execution, restart/replay and lost ACK, plus a real native revision1→2 edit between admission and execution returning integer23. Four root enqueue POSTs produced four roots and exactly four native children. A string return was explicitly unsupported without copying its contents. This uses the pinned original router/storage/Graph/processor/queue on synthetic metadata-created SQLite, synthetic config/caller/services/thumbnail wiring and a Python 3.11 shim. Full InvokeAI bootstrap/auth/migrations, GPU/model execution and arbitrary Canvas/compiler parity remain unaccepted. Private harness/evidence are not release payload; Docker remains dev6.
+Installed dev10 acceptance exercised authenticated HTTP and SDK MCP integer17, original native child/return execution, restart/replay and lost ACK, plus a real native revision1→2 edit between admission and execution returning integer23. Four root enqueue POSTs produced four roots and exactly four native children. A string return was explicitly unsupported without copying its contents. This uses the pinned original router/storage/Graph/processor/queue on synthetic metadata-created SQLite, synthetic config/caller/services/thumbnail wiring and a Python 3.11 shim. Full InvokeAI bootstrap/auth/migrations, GPU/model execution and arbitrary Canvas/compiler parity remain unaccepted. Private harness/evidence are not release payload; Docker packages dev10; native execution inside the container is not accepted.
 
 ## CPU Docker delivery
 
-[Build and isolated bridge run](container/README.md) documents the non-root CPU image, private mounted configuration, writable state volume and repeatable `--docker-image` boundary acceptance. Its base digest and hashed dependency inputs are pinned independently of the package version ranges. HTTP, real MCP and the installed host CLI were exercised against the built image on clean volumes, including auth negatives, duplicate ownership refusal and restart persistence.
+[Build and isolated bridge run](container/README.md) documents the non-root CPU image, private mounted configuration, writable state volume and repeatable `--docker-image` boundary acceptance. The concise [source/packaged/live outcome matrix](SPEC.md#docker-delivery-contract-and-outcome--dev10) separates this delivery from earlier native/media probes. Its base digest and hashed dependency inputs are pinned independently of the package version ranges. HTTP, real MCP and the installed host CLI were exercised against the built image on clean volumes, including auth negatives, duplicate ownership refusal and restart persistence.
 
-The retained CPU Docker image is 0.4.0.dev6 and does not contain the dev7 typed-result, dev8 censor or dev9 mask delta; these deltas did not rebuild the image. It was rebuilt and accepted for dev6: installed source/wheel/image module equality, real HTTP/MCP/host CLI, owner refusal and restart persistence. The installed `atlas-state` executable also completed populated synthetic offline backup→new-root restore inside the non-root read-only image with networking disabled, exact durable bytes/inventory comparison, shared-lock refusal and quarantine/reconciliation checks; see [BACKUP.md](BACKUP.md). Full legacy migration, full native server execution, GPU jobs and container media inference remain unaccepted (installed host censor acceptance is documented above). Source licensing/third-party redistribution, SBOM and release provenance still need release review before publication. No live deployment or public service is part of this delivery.
+The current CPU Docker image is 0.4.0.dev10, built from current source with the existing pinned base and dependencies. Accepted: complete source/wheel/installed/image Python module equality, real HTTP/SDK MCP/host CLI, auth/Host/Origin negatives, owner refusal, durable corpus restart/replay, and current workflow public schemas with explicit missing-backend refusal. Shipping native/media adapters does not accept their execution inside this image. The installed `atlas-state` executable also completed populated synthetic offline backup→new-root restore inside the non-root read-only image with networking disabled, exact durable bytes/inventory comparison, shared-lock refusal and quarantine/reconciliation checks; see [BACKUP.md](BACKUP.md). Full legacy migration, full native server execution, GPU jobs and container media inference remain unaccepted (installed host censor acceptance is documented above). Source licensing/third-party redistribution, SBOM and release provenance still need release review before publication. No live deployment or public service is part of this delivery.
 
 ## Populated literal search and numerical creative discovery
 
@@ -251,7 +251,7 @@ Repeat the installed populated outcome with a NEW private output directory:
 
 ```sh
 /absolute/venv/bin/python -I -B verification/creative_portable.py \
-  --wheel /absolute/path/to/atlas_engine-0.4.0.dev6-py3-none-any.whl \
+  --wheel /absolute/path/to/atlas_engine-0.4.0.dev10-py3-none-any.whl \
   --out /absolute/new/private-creative-directory
 ```
 

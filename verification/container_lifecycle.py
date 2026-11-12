@@ -76,6 +76,13 @@ class Container:
         assert inspected['Config']['User'] == '10001:10001'
         assert inspected['HostConfig']['PortBindings']['12088/tcp'] == [{'HostIp': '127.0.0.1', 'HostPort': str(self.port)}]
         assert inspected['HostConfig']['ReadonlyRootfs']
+        assert inspected['HostConfig']['CapDrop'] == ['ALL']
+        assert 'no-new-privileges' in inspected['HostConfig']['SecurityOpt']
+        ownership = json.loads(self.exec(['python', '-I', '-c',
+            'import os,json;print(json.dumps({p:[os.stat(p).st_uid,os.stat(p).st_gid] '
+            'for p in ["/var/lib/atlas","/var/lib/atlas/corpus","/run/atlas"]}))']).stdout)
+        assert all(ids == [10001, 10001] for ids in ownership.values()), ownership
+        value['ownership'] = ownership
         assert json.loads(self.run('network', 'inspect', self.name).stdout)[0]['Driver'] == 'bridge'
         value.update(image_id=inspected['Image'], network=self.name, state_volume=self.state,
                      ports=inspected['NetworkSettings']['Ports'], commands=self.commands)
