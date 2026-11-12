@@ -86,6 +86,15 @@ class GraphSubmit(Strict):
     graph: dict
     runs: int = Field(default=1,ge=1,le=4)
 class BatchSubmit(Submit): runs: int = Field(default=2,ge=1,le=4)
+class WorkflowRef(Strict):
+    connection_id: str = Field(min_length=1,max_length=128)
+    backend_generation: str = Field(min_length=1,max_length=128)
+    workflow_id: str = Field(min_length=1,max_length=200)
+class WorkflowRun(WorkflowRef):
+    request_id: str = Field(min_length=1,max_length=128)
+    version_semantics: Literal['latest_at_execution']
+    workflow_inputs: dict[str, int] = Field(max_length=32)
+    return_key: str = Field(min_length=1,max_length=128)
 class Feedback(Strict):
     request_id: str = Field(min_length=1,max_length=128)
     target_id: str = Field(min_length=1,max_length=128)
@@ -188,7 +197,7 @@ SCHEMAS = {
     'search':Search,'evidence':Evidence,'catalog.list':ModelQuery,'catalog.resolve':Resolve,
     'catalog.get':NativeRef,'queue.status':Empty,'observer.reconcile':Empty,
     'images.list':Images,'image.metadata':ImageRef,'boards.list':Empty,
-    'workflows.list':Empty,'workflows.get':NativeRef,
+    'workflows.list':Empty,'workflows.get':NativeRef,'workflows.schema':WorkflowRef,'workflows.run':WorkflowRun,
 }
 class Fault(Exception):
     def __init__(self,code,message): self.code=code;super().__init__(message)

@@ -1,6 +1,7 @@
 {
   "scope": "Complete current input-schema registry. Statuses distinguish core synthetic checks from the narrow workspace HTTP fixture; retained does not mean accepted. See SPEC.md for unimplemented target families.",
-  "operation_count": 113,
+  "operation_count": 115,
+  "saved_workflow_boundary": "dev10 installed HTTP/MCP schema/run/get integer17 through original pinned WorkflowRecordsStorage/router/Graph/call_saved_workflow/child queue/processor/return. Explicit latest_at_execution, observed revision/hash not executed provenance; real edit race returns23, replay/restart/lost ACK no duplicate root/child. Synthetic config/caller/services/metadata SQLite and Python3.11 shim; not full-server/auth/migrations, descendant crash recovery, arbitrary workflows/Canvas or GPU/model acceptance. Docker remains dev6.",
   "queue_native_boundary": "Earlier fixture-graph admission/cancellation plus dev7 original Graph validation, integer invocation and CPU processor/runner/SQLite execution in a private partial harness. Synthetic config/caller/services and Python 3.11 shim; not full native server/auth/bootstrap/migrations, GPU/model acceptance or deployment. Bounded integer/boolean result snapshots use the existing ledger. Docker remains dev6. See SPEC.md.",
   "workspace_native_boundary": "Additionally exercised against pinned InvokeAI projects router/original service/SQLite with synthetic caller/config/service wiring and metadata-created schema. Full-server bootstrap/auth/migrations/UI and other codecs remain unverified.",
   "operations": {
@@ -116,6 +117,8 @@
     "upload.get": "retained_not_exercised",
     "upload.import": "retained_not_exercised",
     "workflows.get": "retained_not_exercised",
-    "workflows.list": "retained_not_exercised"
+    "workflows.list": "retained_not_exercised",
+    "workflows.schema": "installed_dev10_http_mcp_observed_native_integer_subset_compatibility",
+    "workflows.run": "installed_dev10_original_native_cpu_child_return_latest_edit_race_restart_lost_ack"
   }
 }

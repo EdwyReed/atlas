@@ -1,5 +1,15 @@
 # Atlas — headless standalone
 
+## Callable saved workflows — dev10
+
+Implemented: scoped `workflows.schema` / `workflows.run`, original native `call_saved_workflow` wrapper, explicit `latest_at_execution` acknowledgement, bounded literal exposed integer.value inputs and one named signed-64-bit integer return. Reuse existing generation intent/worker/receipt recovery/ACK and exact root item/batch/graph/prepared mapping. No Canvas conversion, workflow library copy, extra queue or database. Source/wheel version 0.4.0.dev10. See README for public request/result shape.
+
+Version contract: original invocation has workflow_id/workflow_inputs, no revision or snapshot parameter. Native original runner authorizer reloads mutable WorkflowRecordsStorage at execution; spawn captures that document into native child state. Observed preflight revision/hash/compatibility are not executed provenance. `executed_revision` remains null/unknown. Immutable pin is unsupported and fails schema validation. Intervening edits, permission changes or unsupported nodes may change/fail execution; the observed CPU subset is not a runtime sandbox. Policy `saved_workflow` is separately opt-in.
+
+Installed exercised: original native workflow router/storage create/readback, HTTP/SDK MCP schema and run/get integer17, required version acknowledgement, literal input/key/scope refusals, completed replay across Atlas/native restart, lost enqueue ACK receipt recovery with no extra POST/child, stale/missing history retained, native offline reads. A real CAS edit revision1→2 after admission executes integer23 while saved observation remains revision1. Four root POSTs/four roots/four children, one child per root. Successful native string return exposes unsupported_value_type without contents. Existing primitive/image/artifact regression and installed core acceptance are required final gates.
+
+Limits: observed workflow schema 1.0.0; 32 nodes/64 edges; integer/workflow_return_value/workflow_return only; exposedFields fallback only, no form; 32 inputs and selected return names bounded. Results copy only selected integer, never child DTOs, arbitrary values or private strings. Original Graph/registry/native builder/runner/child queue/storage/router are exercised on owned synthetic SQLite; caller/config/services/thumbnail dependency wiring and Python3.11 shim remain synthetic. Not full-server auth/bootstrap/schema migrations, arbitrary workflow/Canvas/compiler, descendant crash-resume acceptance or model/GPU/live deployment. Docker remains dev6. Private evidence: atlas-studio/planning/implementation/native-workflows.
+
 ## Optional CPU mask — dev9 contract
 
 Use an explicit private copy of atlas_mask and deployment-owned backend-paths.json, never a pre-existing socket or sibling/personal defaults. Engine owns the worker lifetime, private root lock and ephemeral cache. Graceful shutdown reaps it; Linux parent death kills it. Completed replay and artifact reads never start inference. Restart requires setup again, preserving completed job priors. Retain synchronous segment unless actual execution demonstrates a need for the existing asynchronous lane; no generic inference framework.
@@ -35,7 +45,7 @@ This slice must demonstrate authenticated HTTP status/capabilities/input schemas
 
 ## Implementation boundary
 
-- Package `atlas-engine` 0.4.0.dev9; executable `atlas` (alias `atlas-engine`), `atlas-client` and offline `atlas-state`.
+- Package `atlas-engine` 0.4.0.dev10; executable `atlas` (alias `atlas-engine`), `atlas-client` and offline `atlas-state`.
 - Configuration is explicit JSON, paths relative to its directory. Defaults → config → explicit `--root/--host/--port`. No environment configuration, `.env` discovery or Hermes imports. Secret references are private files. No embedded plaintext InvokeAI token field.
 - Loopback IP bind by default; explicit container mode binds 0.0.0.0 only with an exact `container_endpoint` of `http://127.0.0.1:HOST_PORT`. Container Host/Origin allowlists contain only that endpoint; Docker publication MUST bind host 127.0.0.1. One process; no Uvicorn workers or reload. Every HTTP path, including MCP and unknown artifact paths, passes the same bearer/Host/Origin gate. Old public UI is not mounted or shipped.
 - Corpus is `root/corpus`; ledger/artifacts/cache belong to `root`. Existing lifetime locks and corpus revision CAS are reused. This is not distributed Qdrant CAS.
@@ -60,7 +70,7 @@ This slice must demonstrate authenticated HTTP status/capabilities/input schemas
 | Boards/images/uploads/artifact fetch/publish | Retained; no native write or artifact transfer run |
 | Inpaint/upscale/refinement and concrete graphs | Existing recipe mechanisms retained; GPU/mask polarity/lineage acceptance pending; refinement coverage not established |
 | Mask/censor/media workers | dev8 installed censor: real NTD11 CPU synthetic no-detection inference, durable async admission, independent polling and verified HTTP/MCP artifacts/replay/restart. dev9 installed mask: actual MobileSAM CPU original-raster setup, points/box candidates, explicit job-prior refinement, downloadable PNG/overlay/float32 logits/manifests, replay/restart/cache expiry verified on synthetic geometry; synchronous admission remains explicit |
-| Native projects/workspace CAS/codecs and callable saved workflows | Narrow split-v4 generate-widget prompt codec implemented and fixture-tested; isolated pinned native router/service/SQLite smoke exercised. Full native server/auth, other codecs and callable saved workflows not accepted |
+| Native projects/workspace CAS/codecs and callable saved workflows | Narrow split-v4 prompt codec retained. dev10 installed scoped callable integer workflow via original pinned native router/storage/Graph/child processor verified over HTTP/MCP, explicit latest-at-execution, edit race, replay/restart/lost ACK. Full native server/auth/migrations, other codecs, arbitrary workflows and descendant crash recovery remain unaccepted |
 | Full Canvas/compiler and native image-map semantic search | Not delivered; concrete versioned subsets/negotiated adapters remain target work |
 | Backup/restore/history/bytes/provenance/migration | Same-format offline backup→new-root restore implemented; populated synthetic five-collection raw preimage/history/evidence/tombstone/bytes and quarantine/reconciliation exercised. Full retained private legacy corpus migration NOT accepted; see BACKUP.md |
 | Docker CPU / dependency hashes | Non-root installed wheel, normal bridge loopback publication, clean volumes, HTTP/MCP/host CLI, auth negatives, owner contention and restart persistence exercised; exact pinned hashed CPU/build inputs and digest-pinned base. Linux amd64 only; no live deployment or publication |

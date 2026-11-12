@@ -8,7 +8,7 @@ def identifier(value):
     return isinstance(value, str) and len(value) <= MAX_ID_BYTES and len(value.encode('utf-8')) <= MAX_ID_BYTES
 
 
-def snapshot(session, allowed_nodes):
+def snapshot(session, allowed_nodes, workflow_returns=None):
     """Expose only exact submitted source IDs. Never copy opaque DTO contents.
 
     integer_output and boolean_output match the pinned native primitive DTOs.
@@ -28,6 +28,21 @@ def snapshot(session, allowed_nodes):
         kind = result.get('type') if isinstance(result, dict) else None
         entry = {'node_id': node_id, 'source_node_id': source_id,
                  'type': kind if identifier(kind) else None, 'status': 'unsupported_type'}
+        if kind == 'workflow_return_output' and source_id in (workflow_returns or {}):
+            key = workflow_returns[source_id]
+            if identifier(key):
+                entry['return_key'] = key
+                values = result.get('values')
+                if not isinstance(values, dict) or key not in values:
+                    entry['status'] = 'return_missing'
+                else:
+                    value = values[key]
+                    if type(value) is not int:
+                        entry['status'] = 'unsupported_value_type'
+                    elif not -(2**63) <= value < 2**63:
+                        entry['status'] = 'value_out_of_range'
+                    else:
+                        entry.update(status='available', value=value)
         if kind in ('integer_output', 'boolean_output'):
             value = result.get('value')
             if kind == 'integer_output' and type(value) is int:

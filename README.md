@@ -1,6 +1,6 @@
 # Atlas
 
-Standalone headless Atlas, development package 0.4.0.dev9. The canonical corpus is embedded Qdrant; operational state is SQLite. HTTP, Streamable HTTP MCP and a thin CLI share the existing Engine dispatch. Hermes and InvokeAI are optional clients/backend integrations, not startup dependencies.
+Standalone headless Atlas, development package 0.4.0.dev10. The canonical corpus is embedded Qdrant; operational state is SQLite. HTTP, Streamable HTTP MCP and a thin CLI share the existing Engine dispatch. Hermes and InvokeAI are optional clients/backend integrations, not startup dependencies.
 
 This is a development package, not completion of the full Atlas product. See [SPEC.md](SPEC.md) and [OPERATIONS.json](OPERATIONS.json) for retained capabilities and exercised scope. No UI is delivered.
 
@@ -131,7 +131,7 @@ The dev9 synthetic object acceptance establishes actual CPU model execution, bin
 
 ## Native workspace prompt subset
 
-The registry currently has 113 operations (counted from the shared input schemas). Listing an operation does not certify its backend; `OPERATIONS.json` records the exercised boundary.
+The registry currently has 115 operations (counted from the shared input schemas). Listing an operation does not certify its backend; `OPERATIONS.json` records the exercised boundary.
 
 `projects.get` and `projects.savePrompt` implement a narrow InvokeAI 7 split-v4 codec: an existing layered workspace (`settingsLayering=1`), canvas compatibility at most v2 and an explicitly selected `generate` widget. A save changes only `widgetInstances[id].state.values.positivePrompt`; opaque content and all other workspace values are preserved. This does not create workspaces, migrate documents, resolve inherited defaults, compile workflows or support arbitrary Canvas editing.
 
@@ -185,6 +185,32 @@ In dev7, HTTP `generation.get` and MCP `generation_get` expose the observed resu
 ```
 
 This narrow installed regression uses synthetic DTOs and PNG bytes; it is not image-model execution evidence.
+
+## Callable native saved workflows
+
+`workflows.schema` inspects an existing saved workflow on the pinned native connection. `workflows.run` calls original InvokeAI `call_saved_workflow` and returns an ordinary generation job. Enable native writes and explicitly add `saved_workflow` to policy `accepted_modes`. Atlas does not create or compile saved workflow documents; InvokeAI owns the library and child graph construction.
+
+```json
+{
+  "connection_id": "local-invoke",
+  "backend_generation": "operator-declared-generation-1",
+  "workflow_id": "NATIVE_WORKFLOW_ID",
+  "request_id": "call-1",
+  "version_semantics": "latest_at_execution",
+  "workflow_inputs": {"saved_workflow_input::n::value": 17},
+  "return_key": "result"
+}
+```
+
+Pass only the first three reference fields to `workflows.schema`. Its `workflow_inputs` gives exact supported field names; omitted values use native defaults. Literal supplied names and integers are not trimmed/coerced. The observed subset is schema 1.0.0, at most 32 integer/workflow_return_value/workflow_return nodes and 64 edges, exposedFields integer.value inputs (no form), and literal bounded named return keys. Native compatibility must explicitly report callable. Other schemas/nodes/inputs fail explicitly. This subset is intentionally smaller than general native workflow support.
+
+`latest_at_execution` is required acknowledgement: native reloads the workflow by ID when the call executes, including edits after admission. `workflow_observation.observed_revision` and `observed_sha256` describe the preflight GET only; `executed_revision` is unknown/null. No immutable-revision/snapshot execution is offered. A later edit can change outputs, fail validation or introduce nodes outside the observed subset; the mode is not a CPU/GPU authorization sandbox. Do not enable it for a mutable library whose writers you do not trust.
+
+Read/poll with `generation.get` / `generation.wait`; MCP tools are `workflows_schema`, `workflows_run`, `generation_get`. The selected named result appears at `native_items["<root_item_id>"].native_results.entries`, with source_node_id=`call`, type=`workflow_return_output`, return_key=`result`, status=`available`, value=`17`. Only signed-64-bit integers are copied. Missing keys, strings/booleans/objects and out-of-range integers get `return_missing`, `unsupported_value_type` or `value_out_of_range`, without opaque values. Native job success and supported result availability are separate; inspect both. Image outputs/artifacts are unchanged.
+
+Intent binds scope, native ID, literal inputs, return key and version semantics before the single fenced POST. Exact replay reads the saved receipt without preflight/enqueue; changed arguments conflict. Lost enqueue ACK uses existing native receipt recovery, never blind retry. Native controls descendants; Atlas does not adopt child IDs into the root receipt or store another workflow library. A new explicit run needs a new request ID, including after a native failure. Completed results survive Atlas/native restart and native unavailability once observed. Unobserved results lost from native history cannot be reconstructed.
+
+Installed dev10 acceptance exercised authenticated HTTP and SDK MCP integer17, original native child/return execution, restart/replay and lost ACK, plus a real native revision1→2 edit between admission and execution returning integer23. Four root enqueue POSTs produced four roots and exactly four native children. A string return was explicitly unsupported without copying its contents. This uses the pinned original router/storage/Graph/processor/queue on synthetic metadata-created SQLite, synthetic config/caller/services/thumbnail wiring and a Python 3.11 shim. Full InvokeAI bootstrap/auth/migrations, GPU/model execution and arbitrary Canvas/compiler parity remain unaccepted. Private harness/evidence are not release payload; Docker remains dev6.
 
 ## CPU Docker delivery
 

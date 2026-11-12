@@ -273,7 +273,7 @@ class Engine:
             from .state_backup import READS
             if op not in READS:
                 # Exact known intent replay is a local receipt read only.
-                if op in ('projects.savePrompt','generation.submit','generation.submitGraph','batch.submit','corpus.put','corpus.delete','corpus.restore','corpus.import'):
+                if op in ('projects.savePrompt','generation.submit','generation.submitGraph','workflows.run','batch.submit','corpus.put','corpus.delete','corpus.restore','corpus.import'):
                     kind='native_workspace' if op=='projects.savePrompt' else 'corpus' if op.startswith('corpus.') else 'batch' if op=='batch.submit' else 'generation'
                     intent={'operation':op,**p} if kind in ('corpus','native_workspace') else p
                     existing=self.repo.request(principal,p['request_id'],kind,intent)
@@ -281,6 +281,9 @@ class Engine:
                         return self.corpus.progress(existing) if kind=='corpus' else existing
                 raise Fault('RESTORE_RECONCILIATION_REQUIRED','restored state permits local reads only; reconcile external effects offline before restart')
         if op=='generation.submitGraph':return self.native_queue.submit_graph(p,principal,source)
+        if op in ('workflows.schema','workflows.run'):
+            from . import workflows
+            return workflows.schema(self,p) if op=='workflows.schema' else workflows.run(self,p,principal,source)
         from .workspace import OPERATIONS as WORKSPACE_OPERATIONS
         if op in WORKSPACE_OPERATIONS:return self.workspace.call(op,p,principal,source)
         if op.startswith(('mask.','censor.','media.')):
@@ -333,7 +336,7 @@ class Engine:
         if op=='upload.get':return self.uploads.view(self.uploads.row(p['upload_id']))
         if op=='upload.abort':return self.uploads.abort(p['upload_id'],principal)
         if op=='upload.import':return self.uploads.import_native(p,principal,self.allow_submit)
-        if op=='capabilities':return {'schema_version':1,'startup_mode':getattr(self,'startup_mode','embedded-explicit'),'operations':list(SCHEMAS),'scope':'shared-local','attribution_only':['principal','project','owner','source'],'generative_llm':False,'creative_algorithm':'opaque-directed-math-v1+MMR','generation_submit_enabled':self.allow_submit,'generation_modes':sorted(self.accepted_modes),'native_administration':{'writes_enabled':self.native_admin.enabled,'concurrency':'GET-before-write, not native CAS','replay':'uncertain remote effects retained as ack_unknown; never automatically retried'},'artifact_delivery':{'automatic':self.auto_fetch_artifacts,'retry_seconds':10},'projection':{'enabled':bool(self.projection),'mode':'legacy-compatibility-payload-only' if self.projection else 'disabled'},'canonical_corpus':{'enabled':bool(self.corpus),'backend':'qdrant-local','collections':['tags','loras','checkpoints','generations','tag_relations'],'implementation':'bounded raw/history/staged-import v1; legacy stores separate','coordination':'single local owner; serialized revision CAS, not distributed Qdrant CAS','relation_scope':'all_historical_observations','progress_visibility':'completed stages immediately readable; partial explicit'},'curated_creative':{'enabled':True,'max_references':16,'identity':'request-local literal identity lookup'},'media_modules':self.media.capabilities(),'image_embeddings':{'enabled':False},'not_enabled':['arbitrary_workflow_run','engine_visual_inference','service_control']}
+        if op=='capabilities':return {'schema_version':1,'startup_mode':getattr(self,'startup_mode','embedded-explicit'),'operations':list(SCHEMAS),'scope':'shared-local','attribution_only':['principal','project','owner','source'],'generative_llm':False,'creative_algorithm':'opaque-directed-math-v1+MMR','generation_submit_enabled':self.allow_submit,'generation_modes':sorted(self.accepted_modes),'native_administration':{'writes_enabled':self.native_admin.enabled,'concurrency':'GET-before-write, not native CAS','replay':'uncertain remote effects retained as ack_unknown; never automatically retried'},'artifact_delivery':{'automatic':self.auto_fetch_artifacts,'retry_seconds':10},'projection':{'enabled':bool(self.projection),'mode':'legacy-compatibility-payload-only' if self.projection else 'disabled'},'canonical_corpus':{'enabled':bool(self.corpus),'backend':'qdrant-local','collections':['tags','loras','checkpoints','generations','tag_relations'],'implementation':'bounded raw/history/staged-import v1; legacy stores separate','coordination':'single local owner; serialized revision CAS, not distributed Qdrant CAS','relation_scope':'all_historical_observations','progress_visibility':'completed stages immediately readable; partial explicit'},'curated_creative':{'enabled':True,'max_references':16,'identity':'request-local literal identity lookup'},'saved_workflows':{'mode':'saved_workflow','version_semantics':'explicit latest_at_execution only','inputs':'bounded literal exposed integer.value; exposedFields fallback, no form','output':'one selected signed-64-bit integer named return; unsupported explicit','provenance':'preflight revision/hash observed only; executed revision unknown','execution':'native call_saved_workflow; existing generation ledger and receipt recovery'},'media_modules':self.media.capabilities(),'image_embeddings':{'enabled':False},'not_enabled':['arbitrary_workflow_run','engine_visual_inference','service_control']}
         if op=='status':
             return {'observer':self.repo.health('observer'),'native_events':self.repo.health('native_events'),'worker_alive':bool(self.thread and self.thread.is_alive()),'jobs':self.repo.count()}
         if op=='enrich':
@@ -360,7 +363,7 @@ class Engine:
             if not self.allow_submit:raise Fault('SUBMISSION_DISABLED','native writes disabled')
             old=self.require_kind(p['job_id'],'generation')
             self.native_queue.check(old)
-            if old.get('plan',{}).get('mode')=='native_graph':raise Fault('RETRY_UNSAFE','explicit new graph intent requires a new submitGraph request_id')
+            if old.get('plan',{}).get('mode') in ('native_graph','saved_workflow'):raise Fault('RETRY_UNSAFE','explicit new native intent requires a new request_id on its original operation')
             if old['state'] not in ('failed','canceled'):raise Fault('RETRY_UNSAFE','only authoritative failed/canceled jobs may be retried; unknown ACK never replays')
             cp={**old['payload'],'request_id':p['request_id']}
             if cp['mode'] not in self.accepted_modes:raise Fault('MODE_NOT_ACCEPTED','mode not accepted')
@@ -541,16 +544,16 @@ class Engine:
                     j=self.repo.get(jid);ids=sorted(set(j.get('native_ids',[])+[nid]));previous=j.get('native_items',{})
                     plan=j.get('plan',{})
                     allowed_nodes=None
-                    if plan.get('mode')=='native_graph':
+                    if plan.get('mode') in ('native_graph','saved_workflow'):
                         if (nid not in j.get('native_ids',[]) or
                                 item.get('session',{}).get('graph',{}).get('id')!=plan['graph'].get('id')):
                             raise Fault('NATIVE_IDENTITY_MISMATCH','result item/graph differs from submitted intent')
                         allowed_nodes=plan['graph']['nodes']
-                    observed=self.compact(item,allowed_nodes)
+                    observed=self.compact(item,allowed_nodes,plan.get('workflow_returns'))
                     old=previous.get(str(nid),{})
                     # Native history may be stale or stripped after completion. Keep
                     # the already observed terminal receipt/result, never invent it.
-                    if plan.get('mode')=='native_graph' and old.get('status') in ('completed','failed','canceled'):
+                    if plan.get('mode') in ('native_graph','saved_workflow') and old.get('status') in ('completed','failed','canceled'):
                         if observed.get('status')!=old['status']:
                             observed=old
                         elif old.get('native_results',{}).get('total',0):
@@ -574,7 +577,7 @@ class Engine:
             except Exception as e:
                 return self.repo.health('observer',{'ok':False,'at':time.time(),'error':getattr(e,'code',type(e).__name__),'mode':'item_ids+batched-items_by_ids'})
     @staticmethod
-    def compact(item, result_nodes=None):
+    def compact(item, result_nodes=None, workflow_returns=None):
         d={k:item.get(k) for k in ('item_id','status','status_sequence','batch_id','origin','session_id','created_at','updated_at','error_type')}
         session=item.get('session') or {};graph=session.get('graph') or {};nodes=graph.get('nodes') or {}
         results=session.get('results') or {};out=[]
@@ -586,7 +589,7 @@ class Engine:
                 if isinstance(r.get('image'),dict) and isinstance(r['image'].get('image_name'),str):out.append(r['image']['image_name'])
         if result_nodes is not None:
             from .native_results import snapshot
-            d['native_results']=snapshot(session,result_nodes)
+            d['native_results']=snapshot(session,result_nodes,workflow_returns)
         d['outputs']=out;d['graph_id']=graph.get('id');return d
     @staticmethod
     def outputs(items):return sorted({x for i in items.values() for x in i['outputs']})

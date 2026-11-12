@@ -49,6 +49,23 @@ assert len(json.dumps(bounded).encode()) < 20000
 assert snapshot({'results': {'x'*257: {'type':'integer_output','value':1}}}, {'x'*257})['unscoped'] == 1
 checks.append('64 entries; honest omitted/truncated counts; bounded IDs')
 
+for raw, status in [(17, 'available'), (True, 'unsupported_value_type'),
+                    ('private-string', 'unsupported_value_type'), (2**100, 'value_out_of_range'),
+                    ({'private': 'blob'}, 'unsupported_value_type')]:
+    named = {'prepared_source_mapping': {'prepared-call': 'call'}, 'results': {
+        'prepared-call': {'type': 'workflow_return_output', 'values': {'result': raw, 'other': 'private-string'}},
+        'foreign': {'type': 'workflow_return_output', 'values': {'result': 99}}}}
+    scoped_return = snapshot(named, {'call'}, {'call': 'result'})
+    entry = scoped_return['entries'][0]
+    assert entry['status'] == status and entry['return_key'] == 'result'
+    assert scoped_return['unscoped'] == 1 and 'private' not in json.dumps(scoped_return)
+    if status == 'available': assert type(entry['value']) is int and entry['value'] == 17
+    else: assert 'value' not in entry
+    assert snapshot(named, {'call'})['entries'][0]['status'] == 'unsupported_type'
+assert snapshot({'results': {'call': {'type': 'workflow_return_output', 'values': {}}}},
+                {'call'}, {'call': 'result'})['entries'][0]['status'] == 'return_missing'
+checks.append('selected named workflow return only; exact prepared mapping; integer strict/range; missing/unsupported explicit; no unselected/private/child copying')
+
 item = {'item_id':1,'status':'completed','session_id':'synthetic-session','session': {
     'graph': {'id':'synthetic-graph','nodes': {
         'final': {'is_intermediate':False}, 'input': {'is_intermediate':True},
