@@ -1,5 +1,7 @@
 # CPU container (development slice)
 
+Latest accepted image: `atlas-core:cpu-dev12`, immutable ID `sha256:8596598c4b173517b468a0c0430f8f2f5a0b06ba8d69078490980e1db61f3518`, from commit `6bce0918a344347f3505ffaaa32c248077c82892`. Package dev12 passed isolated core HTTP/MCP/CLI/auth/ownership/restart and populated same-format offline backup/restore with installed `atlas-state`; source/wheel/host/image module parity held. Private repeat commands and receipts: `atlas-studio/planning/implementation/container-dev12/`. The current source dev13 is newer and has NOT been built/run in Docker. Native InvokeAI/media execution inside the image and live deployment remain unaccepted. References to dev10 below describe earlier evidence, not the latest image.
+
 Build from the repository root. No private build paths, Hermes, InvokeAI, vocabulary,
 models or weights are needed. Linux amd64 / Python 3.11 is exercised; other platforms
 are not accepted. The base image is digest-pinned; both dependency inputs use exact

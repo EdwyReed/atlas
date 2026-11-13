@@ -451,6 +451,8 @@ class Onboarding:
             recovery_of = None
             if op in ('models.onboard.refresh', 'models.onboard.recover'):
                 prior = self.e.require_kind(p['job_id'], 'onboarding')
+                if prior.get('source_base', 'https://civitai.red') != self.base:
+                    raise Fault('SOURCE_BINDING_CHANGED', 'refresh requires the original onboarding source')
                 if op == 'models.onboard.recover':
                     if prior['state'] != 'failed' or prior.get('onboarding_error', {}).get('code') != 'REVISION_CONFLICT':
                         raise Fault('RECOVERY_NOT_SUPPORTED', 'recovery requires a terminal revision-conflict onboarding')
@@ -478,7 +480,13 @@ class Onboarding:
                                                  'refresh_of': refresh_of,
                                                  'recovery_of': recovery_of,
                                                  'collector_semantics': 'civitai-dual-stream-v2',
+                                                 'source_base': self.base,
                                                  'initial_generation_heads': generation_heads})
+            # Absolute frozen pagination URLs and relative metadata requests must
+            # never be mixed across operator source reconfiguration. Historical
+            # intents without a binding retain the original public-source default.
+            if job.get('source_base', 'https://civitai.red') != self.base:
+                raise Fault('SOURCE_BINDING_CHANGED', 'resume requires the original onboarding source')
             return self.run(job)
 
     def run(self, job):

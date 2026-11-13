@@ -1,6 +1,6 @@
 # Atlas
 
-Standalone headless Atlas, development package 0.4.0.dev12. The canonical corpus is embedded Qdrant; operational state is SQLite. HTTP, Streamable HTTP MCP and a thin CLI share the existing Engine dispatch. Hermes and InvokeAI are optional clients/backend integrations, not startup dependencies.
+Standalone headless Atlas, development package 0.4.0.dev13. The canonical corpus is embedded Qdrant; operational state is SQLite. HTTP, Streamable HTTP MCP and a thin CLI share the existing Engine dispatch. Hermes and InvokeAI are optional clients/backend integrations, not startup dependencies.
 
 This is a development package, not completion of the full Atlas product. Installed dev10 now also passes the narrow original InvokeAI full-server CPU/no-model flow documented below. See [SPEC.md](SPEC.md) and [OPERATIONS.json](OPERATIONS.json) for retained capabilities and exercised scope. No UI is delivered.
 
@@ -74,6 +74,18 @@ Put it in `connections` before the first start of a NEW state root. The binding 
 `vocabulary` optionally names a compatible tags/related SQLite vocabulary. `reference_url`/`reference_token_file`, `reference_collections`, `reference_mirror`/`reference_delta`, `projection_dir`, `policy_file`, `civitai_url` and `media_config_file` retain existing adapters. Media binding contents currently require explicit worker/model paths. Legacy Windows source/install adapters still need their explicit policy/SSH integration and retain platform-specific paths and remote environment/registry credential lookup; they are not a portable installation acceptance result.
 
 For local semantic encoding, install `atlas-engine[semantic]` from this source and provide compatible local-only weights under `state/cache/fastembed`. Startup never installs or downloads models. Missing vocabulary, InvokeAI, references or media bindings produce explicit unavailable/disabled results while the corpus remains usable. Merely listing an operation does not certify an optional backend or an inference result.
+
+## Registered-model ingestion — dev13
+
+`models.onboard` reuses an already registered LoRA/checkpoint; it does **not** install or load weights. Supply `request_id`, exact `registered_key` and `registered_path`, exact source `model_id`, `version_id`, `file_id`, `file_name`, typed `hash_algorithm` (`SHA256` or `BLAKE3`) and literal `file_hash`. An untyped native hash is not evidence of either algorithm. `gallery_limit` defaults to 30 unique community examples; the entire exact-version author carousel is independent and has no numerical quota. Overlap is stored once with both memberships.
+
+Use `models.onboard.get` with `job_id` for progress; `models.onboard.resume` continues the same interrupted intent. `models.onboard.refresh` requires the prior successful `job_id` and a new `request_id`, retaining historical source observations. Explicit revision-conflict recovery uses `models.onboard.recover`, not a blind overwrite. Inspect returned job state/partial/error: an HTTP success does not certify complete source coverage. MCP names replace dots with underscores. `corpus.files.read` pages saved bytes by SHA256, `offset` and `size` (maximum32768), with base64, `next_offset` and `eof`; verify hash/size. Canonical `corpus.get/page/history` expose the resulting model/generation/tag/relation records separately from operational receipts.
+
+`civitai_url` defaults to `https://civitai.red`. Only that public source or an explicitly owned loopback fixture is supported; no civitai.com fallback. Each dev13 intent pins its source origin: changing it refuses resume, refresh and exact replay with `SOURCE_BINDING_CHANGED` before source requests; historical get remains readable. Pre-dev13 intents without a binding retain the original public-source default.
+
+Installed acceptance uses synthetic source and explicitly synthetic typed native inventory for BOTH model kinds: 30 community +35 author −5 overlap =60 generations each, literal raw metadata, exact tags/relations, all URL-byte HTTP/MCP readbacks, refresh/replay/restart and interrupted/corrupt-file resume. Separate original native catalog/unknown-file registration is not LoRA/main installation/loading acceptance. Neither real external gallery acquisition nor model inference is claimed. Repeat `verification/onboarding_standalone.py --wheel ABS_WHEEL --native-python OWNED_NATIVE_PYTHON --out NEW_PRIVATE_DIRECTORY` using the installed environment's Python with `-I -B`.
+
+Latest accepted Docker is **dev12**, commit `6bce091`, image `sha256:8596598c4b173517b468a0c0430f8f2f5a0b06ba8d69078490980e1db61f3518`. It passed isolated core transport/auth/ownership/restart and populated same-format offline restore. This is not a dev13 container or container-native/media execution acceptance; older dev10 sections below remain historical evidence. No live deployment occurred.
 
 ## Native image imports and boards — dev12
 
