@@ -190,7 +190,20 @@ The registry currently has 121 operations (counted from the shared input schemas
 
 Both operations require `connection_id`, `backend_generation` and `project_id`. Save additionally requires `request_id`, `expected_workspace_revision`, `widget_instance_id` and `prompt`, and the connection's `enable_writes` must be true. Obtain the workspace revision from `projects.get`. A successful operation envelope can contain a failed or `ack_unknown` job receipt: inspect its `state`. Use a NEW request ID only for an explicit new intent, never to bypass an uncertain ACK. Replays and restart recovery never repeat a native PUT. An acknowledged save followed by another workspace edit can remain `ack_unknown`; matching prompt text does not prove authorship.
 
-The committed runner below is a deterministic HTTP contract fixture. A separate isolated integration also exercised the pinned native projects router, original service/DTOs/serialization/transactions/CAS and SQLite schema with a synthetic caller and dependency wiring. It is not full-server/auth/migration or frontend hydration acceptance. No live backend was written. The broader uncertainty/crash scenarios remain fixture-tested.
+Installed dev12 passed `verification/native_fullserver.py --workspace` against the original pinned InvokeAI launcher, strict multiuser auth and fresh migrations 0–34 on Python3.12. The project was created through the original API, which accepts opaque client JSON, with split-v4 content and an existing layered workspace. HTTP and SDK MCP selected-prompt saves were compared with direct authoritative project GET (document=4/canvas=2), including every untouched subtree, another generate widget, prompt history, unknown widget/state/settings and nested opaque values. Reverse native workspace/content edits, independent revisions, stale refusal, an actual native 409 race, concurrent intents, scope/schema/widget/write refusals, persisted binding refusal and completed native-offline receipts passed.
+
+Lost PUT ACK and post-commit Atlas SIGKILL stayed `ack_unknown` across both-daemon restart/replay without another PUT. A durable ACK plus failed verification recovered by GET only; an intervening native edit kept that receipt unknown. The accepted run made exactly 9 Atlas workspace PUTs (8 HTTP200, 1 HTTP409), each with independently observed committed scoped intent before forwarding. Direct test setup/edit traffic added 1 project-create POST, 1 content PUT and 3 workspace PUTs; native queue/models stayed empty. Source/wheel/installed sets and bytes matched (64 Python modules); the reused native package/launcher manifest stayed unchanged (1495 files), all owned processes/proxy stopped. No product gap was found; the matching dev12 wheel is unchanged. Private evidence: `atlas-studio/planning/implementation/native-workspace-fullserver/run-05`.
+
+Repeat with an explicitly owned native runtime and a NEW private output:
+
+```sh
+/absolute/atlas-venv/bin/python -I -B verification/native_fullserver.py --workspace \
+  --native-python /absolute/owned-native-venv/bin/python \
+  --wheel /absolute/path/to/atlas_engine-0.4.0.dev12-py3-none-any.whl \
+  --out /new/private/workspace-fullserver-evidence
+```
+
+This accepts the narrow API codec, not frontend hydration/UI continuation, broad Canvas/document support or populated legacy migration. The earlier deterministic HTTP fixture and original-component synthetic-wiring evidence remain separate; the fixture also covers crash-before-commit, preflight outage and future-codec refusal. No live backend was written. Docker remains dev10.
 
 ## Repeat the slice acceptance
 
@@ -288,7 +301,7 @@ Repeat only with separately provisioned, explicitly owned environments and a NEW
   --out /new/private/fullserver-evidence
 ```
 
-The runner creates credentials and an isolated loopback server/root, submits only its no-model work, injects faults through a local proxy and reaps its own children. Keep its credentials, logs, databases and third-party runtime/source outside releases. Offline model flags are not an OS network sandbox. This does not accept populated legacy upgrades, interrupted descendant recovery, arbitrary workflows, GPU/image generation, UI, native workspace edits on the full server or live deployment. Docker remains the separately accepted dev10 core/schema/backend-refusal and synthetic offline restore delivery, not native/media execution.
+The runner creates credentials and an isolated loopback server/root, submits only its no-model work, injects faults through a local proxy and reaps its own children. Keep its credentials, logs, databases and third-party runtime/source outside releases. Offline model flags are not an OS network sandbox. This does not accept populated legacy upgrades, interrupted descendant recovery, arbitrary workflows, GPU/image generation, UI or live deployment. The later `--workspace` acceptance is documented above. Docker remains the separately accepted dev10 core/schema/backend-refusal and synthetic offline restore delivery, not native/media execution.
 
 ## CPU Docker delivery
 

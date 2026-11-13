@@ -40,7 +40,9 @@ def main():
     p.add_argument('--native-python', required=True, type=Path)
     p.add_argument('--wheel', required=True, type=Path)
     p.add_argument('--images-boards', action='store_true', help='exercise native image/board lifecycle instead of integer graphs')
+    p.add_argument('--workspace', action='store_true', help='exercise native split-v4 projects/workspace instead of integer graphs')
     a = p.parse_args()
+    assert not (a.images_boards and a.workspace), 'select one acceptance slice'
     out = a.out.absolute()
     out.mkdir(parents=True, exist_ok=False, mode=0o700)
     os.umask(0o077)
@@ -90,6 +92,22 @@ print(json.dumps({str(p):{'sha256':hashlib.sha256(p.read_bytes()).hexdigest(),'i
             elif body:
                 record['body_bytes'] = len(body)  # Engine.IO polling is not JSON.
             calls.append(record)
+            workspace_put = a.workspace and self.command == 'PUT' and self.path.endswith('/workspace')
+            if workspace_put:
+                # The original API receives only an already committed Atlas intent.
+                with sqlite3.connect(out/'state/registry.sqlite3') as db:
+                    rows = db.execute("select id,data from jobs where kind='native_workspace' and state='submitting'").fetchall()
+                    assert len(rows) == 1, rows
+                    job = json.loads(rows[0][1])
+                    assert job['prepared'] == record['body']
+                    assert job['payload']['connection_id'] == 'disposable'
+                    assert job['payload']['backend_generation'] == 'native-fullserver-1'
+                    assert self.path == '/api/v1/projects/'+job['payload']['project_id']+'/workspace'
+                    intent_checks.append({'job_id': rows[0][0], 'request_id': job['payload']['request_id'],
+                        'prepared': job['prepared'], 'payload': job['payload'], 'committed_before_native_forward': True})
+                hook = mode.pop('workspace_before_put', None)
+                if hook:
+                    hook()
             if a.images_boards and self.command=='POST' and self.path.startswith(('/api/v1/images/upload','/api/v1/boards/','/api/v1/board_images/')):
                 # Independent SQLite connection observes committed intent BEFORE
                 # forwarding the only mutation to the original native server.
@@ -112,6 +130,21 @@ print(json.dumps({str(p):{'sha256':hashlib.sha256(p.read_bytes()).hexdigest(),'i
                 r = httpx.request(self.command, nu+self.path, content=body or None, headers=h, trust_env=False, timeout=40)
             except httpx.TransportError:
                 r = httpx.Response(503, json={'detail': 'isolated native offline'})
+            record['status'] = r.status_code
+            if workspace_put and mode.get('workspace_fault'):
+                fault = mode.pop('workspace_fault')
+                assert r.is_success, r.text
+                if fault == 'fail-readback':
+                    mode['workspace_fail_get'] = True
+                else:
+                    assert fault in ('lost-ack', 'crash-after-commit')
+                    if fault == 'crash-after-commit':
+                        processes['atlas'].kill()
+                        processes['atlas'].wait(timeout=10)
+                    self.close_connection = True
+                    return
+            if a.workspace and self.command == 'GET' and self.path.startswith('/api/v1/projects/') and mode.pop('workspace_fail_get', False):
+                r = httpx.Response(503, json={'detail': 'injected workspace verification read failure'})
             if mode['missing'] and '/item_ids?' in self.path:
                 r = httpx.Response(200, json={'item_ids': [], 'total_count': 0})
             if mode['stale'] and self.path.endswith('/items_by_ids') and r.status_code == 200:
@@ -279,6 +312,11 @@ print(json.dumps({str(p):{'sha256':hashlib.sha256(p.read_bytes()).hexdigest(),'i
         config.write_text(json.dumps({'root': 'state', 'clients_file': 'clients.json', 'policy_file': 'policy.json', 'port': ap, 'connections': [{'id': 'disposable', 'backend_generation': 'native-fullserver-1', 'account_scope': user['user_id'], 'url': f'http://127.0.0.1:{proxy.server_port}', 'token_file': 'native-token', 'enable_writes': True}]}))
         passed('original launcher/bootstrap/multiuser setup/login/me; missing/wrong token/password and repeated setup refused')
         start_atlas()
+        if a.workspace:
+            sys.path.insert(0, str(Path(__file__).absolute().parent))
+            from native_workspace_fullserver import run
+            run(locals())
+            return
         if a.images_boards:
             sys.path.insert(0,str(Path(__file__).absolute().parent))
             from native_images_boards import run
