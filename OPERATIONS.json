@@ -1,8 +1,8 @@
 {
-  "scope": "Complete current input-schema registry. Statuses distinguish core synthetic checks from the narrow workspace HTTP fixture; retained does not mean accepted. See SPEC.md for unimplemented target families.",
+  "scope": "Complete current input-schema registry. Statuses distinguish core/synthetic checks, narrow workspace fixtures and installed host original-full-server no-model acceptance; retained does not mean accepted. See SPEC.md for unimplemented target families.",
   "operation_count": 115,
-  "saved_workflow_boundary": "dev10 installed HTTP/MCP schema/run/get integer17 through original pinned WorkflowRecordsStorage/router/Graph/call_saved_workflow/child queue/processor/return. Explicit latest_at_execution, observed revision/hash not executed provenance; real edit race returns23, replay/restart/lost ACK no duplicate root/child. Synthetic config/caller/services/metadata SQLite and Python3.11 shim; not full-server/auth/migrations, descendant crash recovery, arbitrary workflows/Canvas or GPU/model acceptance. Docker packages dev10; only core/schema/backend-refusal and synthetic offline restore are container-accepted.",
-  "queue_native_boundary": "Earlier fixture-graph admission/cancellation plus dev7 original Graph validation, integer invocation and CPU processor/runner/SQLite execution in a private partial harness. Synthetic config/caller/services and Python 3.11 shim; not full native server/auth/bootstrap/migrations, GPU/model acceptance or deployment. Bounded integer/boolean result snapshots use the existing ledger. Docker packages dev10; only core/schema/backend-refusal and synthetic offline restore are container-accepted. See SPEC.md.",
+  "saved_workflow_boundary": "dev10 installed host HTTP/SDK MCP schema/run/get integer17 against pinned InvokeAI be318726dc800ff3ba7c6f086fda603fd82abb86 original installed launcher/services/auth/fresh-root migrations on Python3.12.14. Native authenticated workflow create/readback, original callable child/return, both-daemon restart, dropped ACK/GET recovery and offline reads passed; 3 total roots/2 children including one primitive, no duplicates/models. Explicit latest_at_execution; observed revision/hash not executed provenance. Earlier revision race returns23 and string-return refusal remain synthetic-wiring partial-harness evidence. Not descendant crash recovery, legacy upgrades, arbitrary workflows/Canvas, GPU/model or deployment acceptance. Docker remains dev10 core/schema/backend-refusal and synthetic offline restore only.",
+  "queue_native_boundary": "dev10 installed host HTTP graph integer17 and HTTP/SDK MCP result against original pinned full-server bootstrap, strict multiuser setup/login/me, fresh-root migrations0-34/integrity, original Graph/registry/queue/processor and authenticated Socket.IO hints. Restart/replay/lost ACK/stale or missing history/native-offline results passed with exact ownership/counts. No product change/version bump; proxy Engine.IO handling was fixed. Earlier cancellation/retention/crash scenarios retain fixture/partial-harness scope. Bounded results reuse the existing ledger. No models/GPU, legacy migration, live deployment or container native execution acceptance. See SPEC.md.",
   "workspace_native_boundary": "Additionally exercised against pinned InvokeAI projects router/original service/SQLite with synthetic caller/config/service wiring and metadata-created schema. Full-server bootstrap/auth/migrations/UI and other codecs remain unverified.",
   "operations": {
     "admin.get": "retained_not_exercised",
@@ -45,7 +45,7 @@
     "feedback.list": "installed_synthetic_annotation_only_restart",
     "feedback.record": "installed_synthetic_annotation_only_idempotency",
     "generation.cancel": "exercised_isolated_native_queue_fixture_graph",
-    "generation.get": "installed_dev7_http_mcp_integer17_restart_replay_history_missing_native_offline",
+    "generation.get": "installed_dev10_fullserver_http_mcp_integer17_restart_replay_history_missing_native_offline",
     "generation.plan": "retained_not_exercised",
     "generation.records.create": "retained_not_exercised",
     "generation.records.delete": "retained_not_exercised",
@@ -55,7 +55,7 @@
     "generation.records.update": "retained_not_exercised",
     "generation.retry": "retained_not_exercised",
     "generation.submit": "retained_not_exercised",
-    "generation.submitGraph": "installed_dev7_original_cpu_integer_graph_partial_harness_lost_ack",
+    "generation.submitGraph": "installed_dev10_original_fullserver_cpu_integer17_auth_migrations_restart_replay",
     "generation.wait": "retained_not_exercised",
     "image.metadata": "retained_not_exercised",
     "images.list": "retained_not_exercised",
@@ -99,7 +99,7 @@
     "models.onboard.resume": "retained_not_exercised",
     "models.scan": "retained_not_exercised",
     "models.starters": "retained_not_exercised",
-    "observer.reconcile": "retained_not_exercised",
+    "observer.reconcile": "installed_dev10_fullserver_exact_ids_get_receipt_lost_ack_stale_missing_history",
     "outbox.flush": "retained_not_exercised",
     "projection.get": "retained_not_exercised",
     "projection.page": "retained_not_exercised",
@@ -118,7 +118,7 @@
     "upload.import": "retained_not_exercised",
     "workflows.get": "retained_not_exercised",
     "workflows.list": "retained_not_exercised",
-    "workflows.schema": "installed_dev10_http_mcp_observed_native_integer_subset_compatibility",
-    "workflows.run": "installed_dev10_original_native_cpu_child_return_latest_edit_race_restart_lost_ack"
+    "workflows.schema": "installed_dev10_fullserver_http_mcp_observed_native_integer_subset_compatibility",
+    "workflows.run": "installed_dev10_fullserver_cpu_child_integer17_restart_lost_ack_earlier_partial_harness_edit_race"
   }
 }

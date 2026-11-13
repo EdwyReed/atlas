@@ -2,7 +2,7 @@
 
 Standalone headless Atlas, development package 0.4.0.dev10. The canonical corpus is embedded Qdrant; operational state is SQLite. HTTP, Streamable HTTP MCP and a thin CLI share the existing Engine dispatch. Hermes and InvokeAI are optional clients/backend integrations, not startup dependencies.
 
-This is a development package, not completion of the full Atlas product. See [SPEC.md](SPEC.md) and [OPERATIONS.json](OPERATIONS.json) for retained capabilities and exercised scope. No UI is delivered.
+This is a development package, not completion of the full Atlas product. Installed dev10 now also passes the narrow original InvokeAI full-server CPU/no-model flow documented below. See [SPEC.md](SPEC.md) and [OPERATIONS.json](OPERATIONS.json) for retained capabilities and exercised scope. No UI is delivered.
 
 ## Install and start
 
@@ -176,7 +176,7 @@ Repeat queue acceptance only against a disposable loopback backend:
   --package-root "$PACKAGE_ROOT" --out /absolute/new/private-queue-directory
 ```
 
-This runner submits integer graphs, cancels its exact items and injects lost replies/process crashes. Do not point it at a live service. Its earlier private native harness exercised original router/service/SQLite admission and cancellation with a fixture graph codec. A separate dev7 CPU probe now executes the original Graph validation, integer invocation and processor/runner with synthetic config/caller/services and a Python 3.11 shim. This is partial processor acceptance, not full bootstrap/auth/migrations or GPU/model jobs.
+This runner submits integer graphs, cancels its exact items and injects lost replies/process crashes. Do not point it at a live service. Its earlier private native harness exercised original router/service/SQLite admission and cancellation with a fixture graph codec. The dev7 Graph/integer/processor probe used synthetic config/caller/services and a Python 3.11 shim. Those earlier checks are partial-harness evidence; the later original full-server no-model acceptance is documented below. No GPU/model jobs are accepted.
 
 In dev7, HTTP `generation.get` and MCP `generation_get` expose the observed result in `native_items["<item_id>"].native_results.entries`: exact prepared/source node IDs, native type, status, and bounded integer/boolean value. The real no-model graph returns `integer_output` value `17` through Atlas, including after restart, history-missing, exact replay and native shutdown. Values live in the existing ledger, with native session/scope/provenance retained. At most 64 entries per item; unsupported types and omissions are explicit. Strings/opaque DTO fields are not copied. Existing `outputs` image names and the artifact pipeline are unchanged. See [SPEC.md](SPEC.md) for the contract.
 
@@ -210,13 +210,38 @@ Read/poll with `generation.get` / `generation.wait`; MCP tools are `workflows_sc
 
 Intent binds scope, native ID, literal inputs, return key and version semantics before the single fenced POST. Exact replay reads the saved receipt without preflight/enqueue; changed arguments conflict. Lost enqueue ACK uses existing native receipt recovery, never blind retry. Native controls descendants; Atlas does not adopt child IDs into the root receipt or store another workflow library. A new explicit run needs a new request ID, including after a native failure. Completed results survive Atlas/native restart and native unavailability once observed. Unobserved results lost from native history cannot be reconstructed.
 
-Installed dev10 acceptance exercised authenticated HTTP and SDK MCP integer17, original native child/return execution, restart/replay and lost ACK, plus a real native revision1→2 edit between admission and execution returning integer23. Four root enqueue POSTs produced four roots and exactly four native children. A string return was explicitly unsupported without copying its contents. This uses the pinned original router/storage/Graph/processor/queue on synthetic metadata-created SQLite, synthetic config/caller/services/thumbnail wiring and a Python 3.11 shim. Full InvokeAI bootstrap/auth/migrations, GPU/model execution and arbitrary Canvas/compiler parity remain unaccepted. Private harness/evidence are not release payload; Docker packages dev10; native execution inside the container is not accepted.
+Earlier installed dev10 acceptance exercised authenticated Atlas HTTP and SDK MCP integer17, original native child/return execution, restart/replay and lost ACK, plus a real native revision1→2 edit between admission and execution returning integer23. Four root enqueue POSTs produced four roots and exactly four native children. A string return was explicitly unsupported without copying its contents. That run used the pinned original components on metadata-created SQLite with synthetic config/caller/services/thumbnail wiring and a Python 3.11 shim; edit-race/string-return evidence retains that boundary. The later full-server run below uses original bootstrap/auth/migrations for integer17. GPU/model execution and arbitrary Canvas/compiler parity remain unaccepted. Private harness/evidence are not release payload; Docker packages dev10; native execution inside the container is not accepted.
+
+## Original full-server CPU / no-model acceptance
+
+Installed Atlas dev10 was exercised against pinned InvokeAI `be318726dc800ff3ba7c6f086fda603fd82abb86` (7.0.0-beta.1), installed with its CPU dependencies on CPython 3.12.14. The original `invokeai-web --root` launcher initialized a fresh private root, native services, strict-password multiuser authentication and migrations 0–34. No service/caller/config overrides, synthetic migration tables or custom invocations were used. Native runs headless without a frontend build.
+
+| Flow | Accepted host result |
+|---|---|
+| Setup / login / authorization | Original setup/login/me; missing/wrong bearer, wrong password and repeat setup refused; identity survives restart |
+| Explicit native graph | Atlas HTTP submitGraph → original Graph/registry/queue/processor → integer17 via HTTP and real SDK MCP |
+| Saved callable | Original authenticated workflow create/readback → Atlas HTTP/MCP schema → SDK MCP run → original native child → selected integer17 |
+| Events / recovery | Authenticated Socket.IO polling subscribed and delivered queue hints; authoritative GET hydration, both-daemon restart, exact HTTP/MCP replay and dropped enqueue ACK recovery passed |
+| Durable evidence | Exactly 3 root POSTs/3 roots/2 children, all completed under the authenticated user; zero models; SQLite integrity passed; stale/missing history and native-offline local reads preserve results |
+
+The corrected verification proxy handles Engine.IO as text rather than JSON. No product fix or version bump was needed. Complete Atlas source/wheel/installed module equality, installed core transport/auth/ownership/restart acceptance and the compact native-result/image-artifact regression also passed.
+
+Repeat only with separately provisioned, explicitly owned environments and a NEW private output outside source:
+
+```sh
+/absolute/atlas-venv/bin/python -I -B verification/native_fullserver.py \
+  --native-python /absolute/owned-native-venv/bin/python \
+  --wheel /absolute/path/to/atlas_engine-0.4.0.dev10-py3-none-any.whl \
+  --out /new/private/fullserver-evidence
+```
+
+The runner creates credentials and an isolated loopback server/root, submits only its no-model work, injects faults through a local proxy and reaps its own children. Keep its credentials, logs, databases and third-party runtime/source outside releases. Offline model flags are not an OS network sandbox. This does not accept populated legacy upgrades, interrupted descendant recovery, arbitrary workflows, GPU/image generation, UI, native workspace edits on the full server or live deployment. Docker remains the separately accepted dev10 core/schema/backend-refusal and synthetic offline restore delivery, not native/media execution.
 
 ## CPU Docker delivery
 
 [Build and isolated bridge run](container/README.md) documents the non-root CPU image, private mounted configuration, writable state volume and repeatable `--docker-image` boundary acceptance. The concise [source/packaged/live outcome matrix](SPEC.md#docker-delivery-contract-and-outcome--dev10) separates this delivery from earlier native/media probes. Its base digest and hashed dependency inputs are pinned independently of the package version ranges. HTTP, real MCP and the installed host CLI were exercised against the built image on clean volumes, including auth negatives, duplicate ownership refusal and restart persistence.
 
-The current CPU Docker image is 0.4.0.dev10, built from current source with the existing pinned base and dependencies. Accepted: complete source/wheel/installed/image Python module equality, real HTTP/SDK MCP/host CLI, auth/Host/Origin negatives, owner refusal, durable corpus restart/replay, and current workflow public schemas with explicit missing-backend refusal. Shipping native/media adapters does not accept their execution inside this image. The installed `atlas-state` executable also completed populated synthetic offline backup→new-root restore inside the non-root read-only image with networking disabled, exact durable bytes/inventory comparison, shared-lock refusal and quarantine/reconciliation checks; see [BACKUP.md](BACKUP.md). Full legacy migration, full native server execution, GPU jobs and container media inference remain unaccepted (installed host censor acceptance is documented above). Source licensing/third-party redistribution, SBOM and release provenance still need release review before publication. No live deployment or public service is part of this delivery.
+The current CPU Docker image is 0.4.0.dev10, built from unchanged product modules with the existing pinned base and dependencies. Accepted: complete source/wheel/installed/image Python module equality, real HTTP/SDK MCP/host CLI, auth/Host/Origin negatives, owner refusal, durable corpus restart/replay, and current workflow public schemas with explicit missing-backend refusal. Shipping native/media adapters does not accept their execution inside this image. The installed `atlas-state` executable also completed populated synthetic offline backup→new-root restore inside the non-root read-only image with networking disabled, exact durable bytes/inventory comparison, shared-lock refusal and quarantine/reconciliation checks; see [BACKUP.md](BACKUP.md). Full legacy migration, native server execution inside the container, GPU jobs and container media inference remain unaccepted (installed host native/censor/mask acceptance is documented above). Source licensing/third-party redistribution, SBOM and release provenance still need release review before publication. No live deployment or public service is part of this delivery.
 
 ## Populated literal search and numerical creative discovery
 
