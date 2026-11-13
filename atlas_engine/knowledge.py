@@ -90,6 +90,12 @@ class Knowledge:
         if not row:raise Fault('NOT_FOUND','domain record not found')
         r=json.loads(row['record'])
         return {'record':r,'sha256':row['hash']}
+    def history(self,key,after=0,limit=20):
+        with self.repo.connect() as c:
+            rows=c.execute('select revision,record,hash from knowledge_revisions where entity_id=? and revision>? order by revision limit ?', (key,after,limit+1)).fetchall()
+        more=len(rows)>limit
+        items=[{'record':json.loads(r['record']),'sha256':r['hash']} for r in rows[:limit]]
+        return {'items':items,'has_more':more,'next_after_revision':rows[limit-1]['revision'] if more else None}
     def search(self,query,kind=None,after='',limit=20):
         items=[];cursor=after
         # Keyset scan is bounded by the stored corpus; no caller-controlled SQL wildcard.

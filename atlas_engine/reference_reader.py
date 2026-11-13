@@ -59,14 +59,18 @@ def connection(reader, budget):
 
 class DiskKeys:
     """Set-like membership only; no enumeration or cache growing with corpus size."""
-    def __init__(self, path, table='points', extra=(), where=None):
+    def __init__(self, path, table='points', extra=(), where=None, sealed_attachment=False):
         self.path = path
         self.table = table
         self.extra = extra
         self.where = where
+        self.sealed_attachment = sealed_attachment
 
     def connect(self):
         from pathlib import Path
+        if self.sealed_attachment:
+            from .attachment import immutable
+            return immutable(self.path)
         return sqlite3.connect(Path(self.path).absolute().as_uri() + '?mode=ro', uri=True)
 
     def bind(self, stack, budget):
@@ -120,7 +124,7 @@ def iter_items(reader, sql, args=(), limit=None):
                     if limit is not None and count >= limit:
                         return
             # Only layers with older candidates need shadow probes. Never scan IDs.
-            covered = DiskKeys(layer.path, extra=holds)
+            covered = DiskKeys(layer.path, extra=holds, sealed_attachment=getattr(layer, 'sealed_attachment', False))
             newer.append(covered.bind(stack, budget))
 
 

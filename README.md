@@ -1,10 +1,12 @@
 # Atlas
 
-Standalone headless Atlas, development package 0.4.0.dev10. The canonical corpus is embedded Qdrant; operational state is SQLite. HTTP, Streamable HTTP MCP and a thin CLI share the existing Engine dispatch. Hermes and InvokeAI are optional clients/backend integrations, not startup dependencies.
+Standalone headless Atlas, development package 0.4.0.dev11. The canonical corpus is embedded Qdrant; operational state is SQLite. HTTP, Streamable HTTP MCP and a thin CLI share the existing Engine dispatch. Hermes and InvokeAI are optional clients/backend integrations, not startup dependencies.
 
 This is a development package, not completion of the full Atlas product. Installed dev10 now also passes the narrow original InvokeAI full-server CPU/no-model flow documented below. See [SPEC.md](SPEC.md) and [OPERATIONS.json](OPERATIONS.json) for retained capabilities and exercised scope. No UI is delivered.
 
 ## Install and start
+
+dev11 adds an explicit offline historical attachment → new quarantined root path, preserving the entire operational ledger and exposing complete knowledge history and raw/literal historical mirror reads. The original mirror remains a pinned external read-only dependency; zero legacy points are relabelled canonical. Full migration/self-contained portability and atomic upstream capture are not claimed. See [ATTACHMENT.md](ATTACHMENT.md). The accepted Docker delivery remains dev10; this slice does not rebuild/deploy it.
 
 Linux and Python 3.11 are the first acceptance target. Use a new environment; do not install into an active service environment.
 

@@ -19,9 +19,11 @@ from .corpus import COLLECTIONS, FORMAT
 from .repository import dump
 
 INCLUDED = {'registry.sqlite3', 'corpus', 'artifacts', 'media',
-            'connection-binding.json', 'restore-state.json'}
+            'connection-binding.json', 'restore-state.json', 'legacy-attachment.json'}
 MARKER = 'restore-state.json'
 READS = {'capabilities', 'status', 'jobs.get', 'jobs.list', 'jobs.page', 'jobs.events',
+         'knowledge.get', 'knowledge.search', 'knowledge.history', 'legacy.rows.page',
+         'attachment.status', 'attachment.get', 'attachment.page',
          'generation.get', 'batch.get', 'dream.get', 'admin.get', 'artifact.read',
          'artifact.list', 'upload.get', 'mask.get', 'censor.get',
          'corpus.get', 'corpus.page', 'corpus.history', 'corpus.import.get',
@@ -182,6 +184,8 @@ def sync_tree(root):
 def backup(source, destination):
     source, destination = new_target(source, destination)
     with offline(source):
+        if (source/'legacy-attachment.json').exists():
+            raise ValueError('partial legacy attachment has external dependencies; self-contained backup unsupported')
         # Inventory selected trees before touching destination. Excluded paths
         # (including secrets and external symlinks) are named, never traversed.
         selected = sorted(INCLUDED & {p.name for p in source.iterdir()})
@@ -292,6 +296,8 @@ def restore_state(root):
         raise ValueError('invalid or moved restore marker; restore through atlas-state')
     if state.get('preimage_verified') is False:
         raise ValueError('incomplete restore; restore backup to a new destination')
+    if state.get('migration_kind')=='legacy-attachment-partial-v1' and state.get('reconciled') is not False:
+        raise ValueError('partial legacy mapping cannot be activated')
     return state
 
 
@@ -315,6 +321,8 @@ def reconcile(root, report_path):
     with offline(root):
         state = restore_state(root)
         if not state or state['reconciled']: raise ValueError('quarantined restore required')
+        if state.get('migration_kind')=='legacy-attachment-partial-v1':
+            raise ValueError('partial legacy mapping cannot be reconciled/activated')
         report = json.loads(safe_path(report_path).read_text())
         if (report.get('registry_logical_sha256') != registry_digest(root)
                 or report.get('backup_manifest_sha256') != state['backup_manifest_sha256']

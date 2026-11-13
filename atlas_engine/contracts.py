@@ -55,6 +55,22 @@ class KnowledgeSearch(Strict):
     limit: int = Field(default=20,ge=1,le=100)
 class KnowledgeGet(Strict):
     entity_id: str = Field(min_length=1,max_length=512)
+class KnowledgeHistory(KnowledgeGet):
+    after_revision: int = Field(default=0,ge=0)
+    limit: int = Field(default=20,ge=1,le=100)
+class LegacyRowsPage(Strict):
+    source: str = Field(min_length=1,max_length=4096)
+    table_name: str = Field(min_length=1,max_length=256)
+    after: int = Field(default=0,ge=0)
+    limit: int = Field(default=20,ge=1,le=100)
+class AttachmentView(Strict):
+    view: Literal['baseline','overlay'] = 'baseline'
+    collection: str = Field(min_length=1,max_length=256)
+class AttachmentGet(AttachmentView):
+    id_json: str = Field(min_length=1,max_length=2048)
+class AttachmentPage(AttachmentView):
+    after: str = Field(default='',max_length=2048)
+    limit: int = Field(default=10,ge=1,le=30)
 class LoRA(Strict):
     model: str = Field(min_length=1,max_length=200)
     weight: float = Field(default=1.0,ge=-2,le=2)
@@ -174,6 +190,8 @@ class RecordHistory(RecordRef):
     after_revision: int = Field(default=0,ge=0)
     limit: int = Field(default=20,ge=1,le=100)
 SCHEMAS = {
+    'knowledge.history':KnowledgeHistory,'legacy.rows.page':LegacyRowsPage,
+    'attachment.status':Empty,'attachment.get':AttachmentGet,'attachment.page':AttachmentPage,
     'legacy.request':LegacyRequest,
     'models.lora.install':LoRAInstall,
     'loras.create':RecordCreate,'loras.get':RecordRef,'loras.list':ListQuery,'loras.update':RecordUpdate,'loras.delete':RecordChange,'loras.history':RecordHistory,

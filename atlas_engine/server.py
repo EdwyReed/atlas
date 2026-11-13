@@ -107,6 +107,12 @@ def main():
     a=p.parse_args()
     try:
         config=Config.load(a.config,root=a.root,host=a.host,port=a.port)
+        from .state_backup import restore_state
+        restored=restore_state(config.root)
+        if restored and restored.get('migration_kind')=='legacy-attachment-partial-v1':
+            if any((config.connections,config.reference_url,config.reference_mirror,config.reference_delta,
+                    config.reference_collections is not None,config.projection_dir,config.media_config_file)):
+                raise ValueError('partial legacy attachment requires offline configuration without backends/projection/media; references are receipt-bound')
         identities=clients(config.clients_file)
         connection=config.connections[0] if config.connections else None
         invoke=Invoke(connection.url,secret(connection.token_file)) if connection else unconfigured(Invoke,'INVOKE_UNCONFIGURED')

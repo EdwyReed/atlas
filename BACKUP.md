@@ -4,6 +4,8 @@ Outcome: stopped populated Atlas root → private backup directory → NEW root,
 without converting corpus points, revisions, tombstones, evidence or byte files.
 This is same-format Linux embedded-Qdrant recovery, not historical corpus migration.
 
+dev11's separate [offline legacy attachment slice](ATTACHMENT.md) preserves the complete captured ledger and unchanged external mirror dependencies in a new quarantined root. It does not make the original online capture atomic. `atlas-state backup` refuses these partial roots rather than silently excluding their external attachments; `atlas-state reconcile` cannot activate them. The same-format backup contract below is unchanged for ordinary canonical roots.
+
 `atlas-state backup ROOT BACKUP` holds the existing root/service.lock and
 corpus/owner.lock for the entire snapshot. An active owner is refused. Registry
 uses SQLite backup (includes committed WAL); the closed Qdrant tree is copied

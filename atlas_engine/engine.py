@@ -13,6 +13,11 @@ class Engine:
         from .state_backup import restore_state
         state=restore_state(root)
         self.restore_quarantined=bool(state and not state['reconciled'])
+        self.attachment=None
+        if state and state.get('migration_kind')=='legacy-attachment-partial-v1':
+            from .attachment import Attachment
+            self.attachment=Attachment(root)
+            atlas=self.attachment
         self.projection=projection
         self.repo=Repository(root);self.vocab=Vocabulary(vocabulary);self.creative=CreativeSearch(self.vocab)
         from .knowledge import Knowledge
@@ -271,7 +276,7 @@ class Engine:
     def dispatch(self,op,p,principal,source):
         if self.restore_quarantined:
             from .state_backup import READS
-            if op not in READS:
+            if op not in READS and not (self.attachment is not None and op in ('search','evidence')):
                 # Exact known intent replay is a local receipt read only.
                 if op in ('projects.savePrompt','generation.submit','generation.submitGraph','workflows.run','batch.submit','corpus.put','corpus.delete','corpus.restore','corpus.import'):
                     kind='native_workspace' if op=='projects.savePrompt' else 'corpus' if op.startswith('corpus.') else 'batch' if op=='batch.submit' else 'generation'
@@ -280,6 +285,18 @@ class Engine:
                     if existing:
                         return self.corpus.progress(existing) if kind=='corpus' else existing
                 raise Fault('RESTORE_RECONCILIATION_REQUIRED','restored state permits local reads only; reconcile external effects offline before restart')
+        if op.startswith('attachment.'):
+            if self.attachment is None:raise Fault('ATTACHMENT_UNCONFIGURED','no offline legacy attachment in this root')
+            return self.attachment.call(op,p)
+        if op=='legacy.rows.page':
+            with self.repo.connect() as c:
+                if not c.execute("select 1 from sqlite_master where name='legacy_rows' and type='table'").fetchone():
+                    return {'items':[],'has_more':False,'next_after':None,'inert':True}
+                rows=c.execute('select row_number,sha256,data from legacy_rows where source=? and table_name=? and row_number>? order by row_number limit ?', (p['source'],p['table_name'],p['after'],p['limit']+1)).fetchall()
+            more=len(rows)>p['limit']
+            items=[dict(r) for r in rows[:p['limit']]]
+            return {'items':items,'has_more':more,'next_after':items[-1]['row_number'] if more else None,'inert':True}
+        if op=='knowledge.history':return self.knowledge.history(p['entity_id'],p['after_revision'],p['limit'])
         if op=='generation.submitGraph':return self.native_queue.submit_graph(p,principal,source)
         if op in ('workflows.schema','workflows.run'):
             from . import workflows
@@ -438,7 +455,7 @@ class Engine:
                     resource_source={'status':'unavailable','error':{'code':e.code},'complete':False}
                 else:resource_source={'status':'available','complete':True}
                 resources=[x for x in resource_rows if p['query'].lower() in str(x['payload']).lower()][:p['limit']]
-                tags=self.vocab.search(p['query'],p['limit'])
+                tags=self.vocab.search(p['query'],p['limit']) if self.vocab.path is not None else []
             if p['mode'] in ('semantic','hybrid'):
                 if getattr(self.atlas,'semantic_enabled',True) is not True:raise Fault('EMBEDDING_SPACE_UNVERIFIED','legacy vectors preserved in quarantine; semantic queries disabled before encoding')
                 vector=self.text_encoder.encode(p['query'])

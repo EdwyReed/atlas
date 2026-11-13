@@ -1,6 +1,6 @@
 {
   "scope": "Complete current input-schema registry. Statuses distinguish core/synthetic checks, narrow workspace fixtures and installed host original-full-server no-model acceptance; retained does not mean accepted. See SPEC.md for unimplemented target families.",
-  "operation_count": 115,
+  "operation_count": 120,
   "saved_workflow_boundary": "dev10 installed host HTTP/SDK MCP schema/run/get integer17 against pinned InvokeAI be318726dc800ff3ba7c6f086fda603fd82abb86 original installed launcher/services/auth/fresh-root migrations on Python3.12.14. Native authenticated workflow create/readback, original callable child/return, both-daemon restart, dropped ACK/GET recovery and offline reads passed; 3 total roots/2 children including one primitive, no duplicates/models. Explicit latest_at_execution; observed revision/hash not executed provenance. Earlier revision race returns23 and string-return refusal remain synthetic-wiring partial-harness evidence. Not descendant crash recovery, legacy upgrades, arbitrary workflows/Canvas, GPU/model or deployment acceptance. Docker remains dev10 core/schema/backend-refusal and synthetic offline restore only.",
   "queue_native_boundary": "dev10 installed host HTTP graph integer17 and HTTP/SDK MCP result against original pinned full-server bootstrap, strict multiuser setup/login/me, fresh-root migrations0-34/integrity, original Graph/registry/queue/processor and authenticated Socket.IO hints. Restart/replay/lost ACK/stale or missing history/native-offline results passed with exact ownership/counts. No product change/version bump; proxy Engine.IO handling was fixed. Earlier cancellation/retention/crash scenarios retain fixture/partial-harness scope. Bounded results reuse the existing ledger. No models/GPU, legacy migration, live deployment or container native execution acceptance. See SPEC.md.",
   "workspace_native_boundary": "Additionally exercised against pinned InvokeAI projects router/original service/SQLite with synthetic caller/config/service wiring and metadata-created schema. Full-server bootstrap/auth/migrations/UI and other codecs remain unverified.",
@@ -9,6 +9,9 @@
     "artifact.fetch": "retained_not_exercised",
     "artifact.list": "installed_dev8_media_artifacts",
     "artifact.read": "installed_dev8_media_http_mcp_hash_dimensions",
+    "attachment.get": "installed_dev11_baseline_overlay_samples_raw_http_mcp",
+    "attachment.page": "installed_dev11_baseline_overlay_first_page_http",
+    "attachment.status": "installed_dev11_pinned_external_mapping_http_mcp",
     "batch.get": "retained_not_exercised",
     "batch.submit": "retained_not_exercised",
     "boards.create": "retained_not_exercised",
@@ -63,8 +66,10 @@
     "jobs.list": "retained_not_exercised",
     "jobs.page": "installed_dev8_independent_media_poll",
     "knowledge.get": "installed_synthetic_offline_import_public_readback",
+    "knowledge.history": "installed_dev11_all_retained_revisions_http_mcp_restart_exact",
     "knowledge.search": "installed_synthetic_populated_literal",
     "legacy.request": "retained_not_exercised",
+    "legacy.rows.page": "installed_dev11_retained_inert_sample_http_mcp_all_tables_preserved",
     "loras.create": "retained_not_exercised",
     "loras.delete": "retained_not_exercised",
     "loras.get": "retained_not_exercised",
@@ -118,7 +123,8 @@
     "upload.import": "retained_not_exercised",
     "workflows.get": "retained_not_exercised",
     "workflows.list": "retained_not_exercised",
-    "workflows.schema": "installed_dev10_fullserver_http_mcp_observed_native_integer_subset_compatibility",
-    "workflows.run": "installed_dev10_fullserver_cpu_child_integer17_restart_lost_ack_earlier_partial_harness_edit_race"
-  }
+    "workflows.run": "installed_dev10_fullserver_cpu_child_integer17_restart_lost_ack_earlier_partial_harness_edit_race",
+    "workflows.schema": "installed_dev10_fullserver_http_mcp_observed_native_integer_subset_compatibility"
+  },
+  "legacy_attachment_boundary": "dev11 parent acceptance: complete ledger table/schema preservation; every retained knowledge revision through authenticated HTTP, SDK MCP history/raw/status/inert samples, raw baseline/overlay samples, literal lookup, restart and quarantine refusals. Mirror remains externally pinned; zero canonicalized legacy points. Not self-contained or full migration. Source capture: two exhaustive equal online passes; NOT atomic; writers NOT fenced. Docker remains dev10."
 }
