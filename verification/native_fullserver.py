@@ -41,8 +41,9 @@ def main():
     p.add_argument('--wheel', required=True, type=Path)
     p.add_argument('--images-boards', action='store_true', help='exercise native image/board lifecycle instead of integer graphs')
     p.add_argument('--workspace', action='store_true', help='exercise native split-v4 projects/workspace instead of integer graphs')
+    p.add_argument('--image-workflows', action='store_true', help='exercise bounded saved IMAGE resize recipe')
     a = p.parse_args()
-    assert not (a.images_boards and a.workspace), 'select one acceptance slice'
+    assert sum((a.images_boards,a.workspace,a.image_workflows)) <= 1, 'select one acceptance slice'
     out = a.out.absolute()
     out.mkdir(parents=True, exist_ok=False, mode=0o700)
     os.umask(0o077)
@@ -123,6 +124,15 @@ print(json.dumps({str(p):{'sha256':hashlib.sha256(p.read_bytes()).hexdigest(),'i
                         assert hashlib.sha256(u['bytes']).hexdigest()==job['prepared']['sha256']
                         assert json.loads(u['data'])['import_intent']=={k:v for k,v in payload.items() if k!='operation'}
                     intent_checks.append({'job_id':rows[0]['id'],'operation':payload['operation'],'scope':{k:payload[k] for k in ('connection_id','backend_generation')},'committed_before_native_forward':True})
+            if a.image_workflows and self.command=='POST' and self.path.endswith('/enqueue_batch'):
+                with sqlite3.connect(out/'state/registry.sqlite3') as db:
+                    rows=db.execute("select id,data from jobs where kind='generation' and state='submitting'").fetchall()
+                    assert len(rows)==1,rows
+                    job=json.loads(rows[0][1])
+                    assert job['prepared_submission']==record['body']
+                    intent_checks.append({'job_id':rows[0][0],'prepared':job['prepared_submission'],'committed_before_native_forward':True})
+                hook=mode.pop('enqueue_before_forward',None)
+                if hook:hook()
             h = {'Content-Type': content_type} if content_type else {}
             if self.headers.get('Authorization'):
                 h['Authorization'] = self.headers['Authorization']
@@ -156,6 +166,8 @@ print(json.dumps({str(p):{'sha256':hashlib.sha256(p.read_bytes()).hexdigest(),'i
             if mode['lost'] and self.path.endswith('/enqueue_batch'):
                 mode['lost'] = False
                 assert r.status_code < 300, r.text
+                if mode.pop('crash_enqueue',False):
+                    processes['atlas'].kill();processes['atlas'].wait(timeout=10)
                 self.close_connection = True
                 return
             if self.command=='POST' and mode.get('drop_path') and self.path.startswith(mode['drop_path']):
@@ -312,6 +324,11 @@ print(json.dumps({str(p):{'sha256':hashlib.sha256(p.read_bytes()).hexdigest(),'i
         config.write_text(json.dumps({'root': 'state', 'clients_file': 'clients.json', 'policy_file': 'policy.json', 'port': ap, 'connections': [{'id': 'disposable', 'backend_generation': 'native-fullserver-1', 'account_scope': user['user_id'], 'url': f'http://127.0.0.1:{proxy.server_port}', 'token_file': 'native-token', 'enable_writes': True}]}))
         passed('original launcher/bootstrap/multiuser setup/login/me; missing/wrong token/password and repeated setup refused')
         start_atlas()
+        if a.image_workflows:
+            sys.path.insert(0,str(Path(__file__).absolute().parent))
+            from native_image_workflows import run
+            run(locals())
+            return
         if a.workspace:
             sys.path.insert(0, str(Path(__file__).absolute().parent))
             from native_workspace_fullserver import run

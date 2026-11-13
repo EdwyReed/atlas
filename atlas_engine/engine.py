@@ -41,6 +41,7 @@ class Engine:
         self.acquisition=Acquisition(self)
         from .artifacts import Artifacts
         self.artifacts=Artifacts(self.repo,invoke)
+        self.artifacts.native_scope=self.native_queue.scope
         from .uploads import Uploads
         self.uploads=Uploads(self.repo,invoke)
         from .media import Media
@@ -356,7 +357,7 @@ class Engine:
             self.native_admin.scope(p)
             from .native_admin import part
             return {'reference':{k:p[k] for k in ('connection_id','backend_generation','image_name')},'native':self.invoke.call('GET','/api/v1/images/i/'+part(p['image_name']))}
-        if op=='capabilities':return {'schema_version':1,'startup_mode':getattr(self,'startup_mode','embedded-explicit'),'operations':list(SCHEMAS),'scope':'shared-local','attribution_only':['principal','project','owner','source'],'generative_llm':False,'creative_algorithm':'opaque-directed-math-v1+MMR','generation_submit_enabled':self.allow_submit,'generation_modes':sorted(self.accepted_modes),'native_administration':{'writes_enabled':self.native_admin.enabled,'concurrency':'GET-before-write, not native CAS','replay':'uncertain remote effects retained as ack_unknown; never automatically retried'},'artifact_delivery':{'automatic':self.auto_fetch_artifacts,'retry_seconds':10},'projection':{'enabled':bool(self.projection),'mode':'legacy-compatibility-payload-only' if self.projection else 'disabled'},'canonical_corpus':{'enabled':bool(self.corpus),'backend':'qdrant-local','collections':['tags','loras','checkpoints','generations','tag_relations'],'implementation':'bounded raw/history/staged-import v1; legacy stores separate','coordination':'single local owner; serialized revision CAS, not distributed Qdrant CAS','relation_scope':'all_historical_observations','progress_visibility':'completed stages immediately readable; partial explicit'},'curated_creative':{'enabled':True,'max_references':16,'identity':'request-local literal identity lookup'},'saved_workflows':{'mode':'saved_workflow','version_semantics':'explicit latest_at_execution only','inputs':'bounded literal exposed integer.value; exposedFields fallback, no form','output':'one selected signed-64-bit integer named return; unsupported explicit','provenance':'preflight revision/hash observed only; executed revision unknown','execution':'native call_saved_workflow; existing generation ledger and receipt recovery'},'media_modules':self.media.capabilities(),'image_embeddings':{'enabled':False},'not_enabled':['arbitrary_workflow_run','engine_visual_inference','service_control']}
+        if op=='capabilities':return {'schema_version':1,'startup_mode':getattr(self,'startup_mode','embedded-explicit'),'operations':list(SCHEMAS),'scope':'shared-local','attribution_only':['principal','project','owner','source'],'generative_llm':False,'creative_algorithm':'opaque-directed-math-v1+MMR','generation_submit_enabled':self.allow_submit,'generation_modes':sorted(self.accepted_modes),'native_administration':{'writes_enabled':self.native_admin.enabled,'concurrency':'GET-before-write, not native CAS','replay':'uncertain remote effects retained as ack_unknown; never automatically retried'},'artifact_delivery':{'automatic':self.auto_fetch_artifacts,'retry_seconds':10},'projection':{'enabled':bool(self.projection),'mode':'legacy-compatibility-payload-only' if self.projection else 'disabled'},'canonical_corpus':{'enabled':bool(self.corpus),'backend':'qdrant-local','collections':['tags','loras','checkpoints','generations','tag_relations'],'implementation':'bounded raw/history/staged-import v1; legacy stores separate','coordination':'single local owner; serialized revision CAS, not distributed Qdrant CAS','relation_scope':'all_historical_observations','progress_visibility':'completed stages immediately readable; partial explicit'},'curated_creative':{'enabled':True,'max_references':16,'identity':'request-local literal identity lookup'},'saved_workflows':{'mode':'saved_workflow','version_semantics':'explicit latest_at_execution only','inputs':'bounded literal exposed integer.value or native-image-resize-v1 scoped IMAGE and dimensions; exposedFields fallback, no form','output':'one selected signed-64-bit integer or verified native child IMAGE named return; unsupported explicit','provenance':'preflight revision/hash observed only; executed revision unknown','execution':'native call_saved_workflow; existing generation ledger and receipt recovery'},'media_modules':self.media.capabilities(),'image_embeddings':{'enabled':False},'not_enabled':['arbitrary_workflow_run','engine_visual_inference','service_control']}
         if op=='status':
             return {'observer':self.repo.health('observer'),'native_events':self.repo.health('native_events'),'worker_alive':bool(self.thread and self.thread.is_alive()),'jobs':self.repo.count()}
         if op=='enrich':
@@ -570,14 +571,18 @@ class Engine:
                             raise Fault('NATIVE_IDENTITY_MISMATCH','result item/graph differs from submitted intent')
                         allowed_nodes=plan['graph']['nodes']
                     observed=self.compact(item,allowed_nodes,plan.get('workflow_returns'))
+                    from .workflow_images import hydrate
+                    observed=hydrate(self,j,item,observed)
                     old=previous.get(str(nid),{})
                     # Native history may be stale or stripped after completion. Keep
                     # the already observed terminal receipt/result, never invent it.
                     if plan.get('mode') in ('native_graph','saved_workflow') and old.get('status') in ('completed','failed','canceled'):
                         if observed.get('status')!=old['status']:
                             observed=old
-                        elif old.get('native_results',{}).get('total',0):
+                        elif old.get('native_results',{}).get('total',0) and (not plan.get('workflow_image_recipe') or old.get('outputs')):
                             observed['native_results']=old['native_results']
+                            if plan.get('workflow_image_recipe') and old.get('outputs'):
+                                observed=old
                     previous[str(nid)]=observed
                     states=[v['status'] for v in previous.values()]
                     if len(previous)<len(ids) or not states or any(x not in ('completed','failed','canceled') for x in states):state='observing'

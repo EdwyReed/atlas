@@ -1,12 +1,12 @@
 # Atlas
 
-Standalone headless Atlas, development package 0.4.0.dev13. The canonical corpus is embedded Qdrant; operational state is SQLite. HTTP, Streamable HTTP MCP and a thin CLI share the existing Engine dispatch. Hermes and InvokeAI are optional clients/backend integrations, not startup dependencies.
+Standalone headless Atlas, unpublished development candidate 0.4.0.dev14. The canonical corpus is embedded Qdrant; operational state is SQLite. HTTP, Streamable HTTP MCP and a thin CLI share the existing Engine dispatch. Hermes and InvokeAI are optional clients/backend integrations, not startup dependencies.
 
-This is a development package, not completion of the full Atlas product. Installed dev10 now also passes the narrow original InvokeAI full-server CPU/no-model flow documented below. See [SPEC.md](SPEC.md) and [OPERATIONS.json](OPERATIONS.json) for retained capabilities and exercised scope. No UI is delivered.
+This is a development package, not completion of the full Atlas product. Installed dev14 passes the bounded native IMAGE recipe and original integer/no-model regression below. See [SPEC.md](SPEC.md) and [OPERATIONS.json](OPERATIONS.json) for exercised scope. Latest accepted Docker remains dev12; older versioned sections retain historical evidence, not acceptance of newer adapters inside that image. No UI is delivered.
 
 ## Install and start
 
-dev11 adds an explicit offline historical attachment → new quarantined root path, preserving the entire operational ledger and exposing complete knowledge history and raw/literal historical mirror reads. The original mirror remains a pinned external read-only dependency; zero legacy points are relabelled canonical. Full migration/self-contained portability and atomic upstream capture are not claimed. See [ATTACHMENT.md](ATTACHMENT.md). The accepted Docker delivery remains dev10; this slice does not rebuild/deploy it.
+dev11 added an explicit offline historical attachment → new quarantined root path, preserving the entire operational ledger and exposing complete knowledge history and raw/literal historical mirror reads. The original mirror remains a pinned external read-only dependency; zero legacy points are relabelled canonical. Full migration/self-contained portability and atomic upstream capture are not claimed. See [ATTACHMENT.md](ATTACHMENT.md). This dev14 slice does not rebuild/deploy Docker.
 
 Linux and Python 3.11 are the first acceptance target. Use a new environment; do not install into an active service environment.
 
@@ -85,7 +85,7 @@ Use `models.onboard.get` with `job_id` for progress; `models.onboard.resume` con
 
 Installed acceptance uses synthetic source and explicitly synthetic typed native inventory for BOTH model kinds: 30 community +35 author −5 overlap =60 generations each, literal raw metadata, exact tags/relations, all URL-byte HTTP/MCP readbacks, refresh/replay/restart and interrupted/corrupt-file resume. Separate original native catalog/unknown-file registration is not LoRA/main installation/loading acceptance. Neither real external gallery acquisition nor model inference is claimed. Repeat `verification/onboarding_standalone.py --wheel ABS_WHEEL --native-python OWNED_NATIVE_PYTHON --out NEW_PRIVATE_DIRECTORY` using the installed environment's Python with `-I -B`.
 
-Latest accepted Docker is **dev12**, commit `6bce091`, image `sha256:8596598c4b173517b468a0c0430f8f2f5a0b06ba8d69078490980e1db61f3518`. It passed isolated core transport/auth/ownership/restart and populated same-format offline restore. This is not a dev13 container or container-native/media execution acceptance; older dev10 sections below remain historical evidence. No live deployment occurred.
+Latest accepted Docker is **dev12**, commit `6bce091`, image `sha256:8596598c4b173517b468a0c0430f8f2f5a0b06ba8d69078490980e1db61f3518`. It passed isolated core transport/auth/ownership/restart and populated same-format offline restore. This is not a dev14 container or container-native/media execution acceptance; older dev10 sections below remain historical evidence. No live deployment occurred.
 
 ## Native image imports and boards — dev12
 
@@ -290,6 +290,47 @@ Intent binds scope, native ID, literal inputs, return key and version semantics 
 
 Earlier installed dev10 acceptance exercised authenticated Atlas HTTP and SDK MCP integer17, original native child/return execution, restart/replay and lost ACK, plus a real native revision1→2 edit between admission and execution returning integer23. Four root enqueue POSTs produced four roots and exactly four native children. A string return was explicitly unsupported without copying its contents. That run used the pinned original components on metadata-created SQLite with synthetic config/caller/services/thumbnail wiring and a Python 3.11 shim; edit-race/string-return evidence retains that boundary. The later full-server run below uses original bootstrap/auth/migrations for integer17. GPU/model execution and arbitrary Canvas/compiler parity remain unaccepted. Private harness/evidence are not release payload; Docker packages dev10; native execution inside the container is not accepted.
 
+## Native callable IMAGE resize — dev14
+
+This bounded recipe uses an **existing native saved workflow** with exactly `img_resize` v1.2.2 → `workflow_return_value` → `workflow_return`, nearest resampling, dimensions 1..2048 and an exposed resize.image field (optional width/height). Workflow schema is 1.0.0 with exposedFields, no form. Atlas does not create that document or compile Canvas; the original native callable constructs and executes its child. Provision a NEW pinned connection with native writes enabled and `{"accepted_modes":["saved_workflow"]}` in the policy file. This mode requires a trusted mutable native library; it is not a CPU-only sandbox after edits.
+
+Use the authenticated `POST /v1/ops/{operation}` endpoint or the equivalent CLI/MCP tools:
+
+1. Obtain a native `image_name` on that exact connection, for example through the verified `upload.begin` → `upload.chunk` → `upload.finalize` → `upload.import` flow above. Preserve the import's immutable original artifact. A local path, upload_id or an unscoped ImageField is not a workflow IMAGE reference.
+2. Inspect the exact saved workflow:
+
+   ```json
+   {"connection_id":"local-invoke","backend_generation":"operator-declared-generation-1","workflow_id":"NATIVE_WORKFLOW_ID"}
+   ```
+
+   Pass this to `workflows.schema` (MCP `workflows_schema`). Check `recipe:"native-image-resize-v1"`, `return_type:"image"`, exact `workflow_inputs` names and `observed_return_keys`. The example below assumes resize node ID `resize` and named return `resized`; use the actual observed names.
+3. Submit `workflows.run` (MCP `workflows_run`):
+
+   ```json
+   {"connection_id":"local-invoke","backend_generation":"operator-declared-generation-1","workflow_id":"NATIVE_WORKFLOW_ID","request_id":"resize-1","version_semantics":"latest_at_execution","workflow_inputs":{"saved_workflow_input::resize::image":{"connection_id":"local-invoke","backend_generation":"operator-declared-generation-1","image_name":"EXACT_NATIVE_IMAGE_NAME"},"saved_workflow_input::resize::width":13,"saved_workflow_input::resize::height":6},"return_key":"resized"}
+   ```
+
+   IMAGE must be explicitly supplied with the matching connection/backend. Omitted width/height use native execution-time defaults. A successful envelope is only a job receipt; inspect its `state`.
+4. Poll `generation.get {"job_id":"RETURNED_JOB_ID"}` (MCP `generation_get`). Inspect both terminal job state and `native_items["<root_item_id>"].native_results.entries`. Only a verified selected IMAGE has `status:"available"`, a scoped `image` reference and `lineage`; its exact name also appears in `outputs`. Native success alone does not guarantee a supported result. Refusal leaves no final output, with `image_status:"image_lineage_unavailable"` and per-entry refusal status where an entry exists.
+5. Fetch that exact selected output using `artifact.fetch {"job_id":"RETURNED_JOB_ID","image_name":"SELECTED_OUTPUT_NAME"}` (MCP `artifact_fetch`). Input/unselected/intermediate names are refused. The receipt includes native bytes SHA-256, size/MIME/dimensions, pixel hash/mode and `native_lineage.input_source` containing the actual executed resize input's connection/backend/name. Submitted IMAGE, root prepared call input and child source/prepared resize input must agree. This is execution lineage, not a pinned library revision or source-byte snapshot.
+6. Page `artifact.read {"artifact_id":"RETURNED_ARTIFACT_ID","offset":0,"size":32768}` (MCP `artifact_read`), decode base64, advance by decoded length until `eof`, and verify size/SHA-256 against the fetch receipt. Original import bytes remain a separate immutable artifact. Native storage may re-encode PNG.
+
+Exact request replay is a local receipt read; changed input under the same request ID conflicts. Lost enqueue ACK uses the existing scoped native receipt and GET-only recovery, never a second enqueue. Completed verified results/artifacts are deliberately cached across restart, missing/stale history and native outage. Cold hydration without complete matching lineage refuses promotion; an already verified historical receipt is not invalidated by later missing history.
+
+`workflow_observation.observed_revision/observed_sha256` describe preflight only; `executed_revision` remains null. The original-server run edited native width11→10 after preflight and verified the actual width10 output, without inventing immutable-revision or edited-whole-graph CPU guarantees. Root graph is compared to submitted intent; child nested session/parent references, prepared/source identities and executed recipe are checked. Native exposes no independent child graph ID in parent call history, so the child graph ID is retained from the exact child response, not falsely cross-checked against a nonexistent parent field.
+
+Installed dev14 host acceptance uses original InvokeAI `be318726dc800ff3ba7c6f086fda603fd82abb86`, original launcher/auth/fresh migrations0–34, zero models and owned asymmetric pixels. HTTP and SDK MCP selected returns, exact downloaded native bytes/dimensions/every nearest pixel, both-daemon restart, lost reply/post-commit SIGKILL recovery and mutable defaults passed: exactly5 root enqueues/5 roots/5 children, with5 durable intent-before-forward observations. Matching installed core, native_results and original full-server integer17 regressions passed. A separate cold deep-copy check derives54 refusals from actual saved run-02 responses; it is not another native execution acceptance. Final evidence is `atlas-studio/planning/implementation/native-image-workflows/{run-05,lineage-final,core-02,results-02,integer-02}`. run-03 remains an incomplete attempt: its scratch donor runtime disappeared before restart; run-05 uses a separately reconstructed pinned CPU runtime, not the lost donor's inode continuity.
+
+```sh
+/absolute/atlas-venv/bin/python -I -B verification/native_fullserver.py --image-workflows \
+  --native-python /absolute/owned-native-venv/bin/python \
+  --wheel /absolute/atlas_engine-0.4.0.dev14-py3-none-any.whl --out /new/private/image-run
+/absolute/atlas-venv/bin/python -I -B verification/native_image_lineage.py \
+  --evidence /private/saved-original-image-run --out /new/private/lineage-run
+```
+
+No models/GPU, learned upscale/inpaint, arbitrary compiler, descendant mid-execution recovery, live service changes, container execution or full legacy migration is accepted. Latest accepted Docker remains dev12; dev14 is an unpublished host candidate.
+
 ## Original full-server CPU / no-model acceptance
 
 Installed Atlas dev10 was exercised against pinned InvokeAI `be318726dc800ff3ba7c6f086fda603fd82abb86` (7.0.0-beta.1), installed with its CPU dependencies on CPython 3.12.14. The original `invokeai-web --root` launcher initialized a fresh private root, native services, strict-password multiuser authentication and migrations 0–34. No service/caller/config overrides, synthetic migration tables or custom invocations were used. Native runs headless without a frontend build.
@@ -319,7 +360,7 @@ The runner creates credentials and an isolated loopback server/root, submits onl
 
 [Build and isolated bridge run](container/README.md) documents the non-root CPU image, private mounted configuration, writable state volume and repeatable `--docker-image` boundary acceptance. The concise [source/packaged/live outcome matrix](SPEC.md#docker-delivery-contract-and-outcome--dev10) separates this delivery from earlier native/media probes. Its base digest and hashed dependency inputs are pinned independently of the package version ranges. HTTP, real MCP and the installed host CLI were exercised against the built image on clean volumes, including auth negatives, duplicate ownership refusal and restart persistence.
 
-The current CPU Docker image is 0.4.0.dev10, built from unchanged product modules with the existing pinned base and dependencies. Accepted: complete source/wheel/installed/image Python module equality, real HTTP/SDK MCP/host CLI, auth/Host/Origin negatives, owner refusal, durable corpus restart/replay, and current workflow public schemas with explicit missing-backend refusal. Shipping native/media adapters does not accept their execution inside this image. The installed `atlas-state` executable also completed populated synthetic offline backup→new-root restore inside the non-root read-only image with networking disabled, exact durable bytes/inventory comparison, shared-lock refusal and quarantine/reconciliation checks; see [BACKUP.md](BACKUP.md). Full legacy migration, native server execution inside the container, GPU jobs and container media inference remain unaccepted (installed host native/censor/mask acceptance is documented above). Source licensing/third-party redistribution, SBOM and release provenance still need release review before publication. No live deployment or public service is part of this delivery.
+The latest accepted CPU Docker image is 0.4.0.dev12 (`atlas-core:cpu-dev12`, immutable ID and source commit in `container/README.md`); dev14 has not been built/run in Docker. The earlier dev10 run used the existing pinned base and dependencies. Accepted in that earlier run: complete source/wheel/installed/image Python module equality, real HTTP/SDK MCP/host CLI, auth/Host/Origin negatives, owner refusal, durable corpus restart/replay, and current workflow public schemas with explicit missing-backend refusal. Shipping native/media adapters does not accept their execution inside this image. The installed `atlas-state` executable also completed populated synthetic offline backup→new-root restore inside the non-root read-only image with networking disabled, exact durable bytes/inventory comparison, shared-lock refusal and quarantine/reconciliation checks; see [BACKUP.md](BACKUP.md). Full legacy migration, native server execution inside the container, GPU jobs and container media inference remain unaccepted (installed host native/censor/mask acceptance is documented above). Source licensing/third-party redistribution, SBOM and release provenance still need release review before publication. No live deployment or public service is part of this delivery.
 
 ## Populated literal search and numerical creative discovery
 

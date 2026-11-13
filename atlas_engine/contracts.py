@@ -106,10 +106,14 @@ class WorkflowRef(Strict):
     connection_id: str = Field(min_length=1,max_length=128)
     backend_generation: str = Field(min_length=1,max_length=128)
     workflow_id: str = Field(min_length=1,max_length=200)
+class WorkflowImage(Strict):
+    connection_id: str = Field(min_length=1,max_length=128)
+    backend_generation: str = Field(min_length=1,max_length=128)
+    image_name: str = Field(min_length=1,max_length=200,pattern=r'^[^/\\\x00-\x1f]+$')
 class WorkflowRun(WorkflowRef):
     request_id: str = Field(min_length=1,max_length=128)
     version_semantics: Literal['latest_at_execution']
-    workflow_inputs: dict[str, int] = Field(max_length=32)
+    workflow_inputs: dict[str, int | WorkflowImage] = Field(max_length=32)
     return_key: str = Field(min_length=1,max_length=128)
 class Feedback(Strict):
     request_id: str = Field(min_length=1,max_length=128)

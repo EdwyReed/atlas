@@ -11,6 +11,7 @@ class Artifacts:
     def __init__(self,repo,invoke):
         import threading
         self.lock=threading.Lock()
+        self.native_scope=lambda: None
         self.repo=repo;self.invoke=invoke;self.root=repo.root/'artifacts';self.root.mkdir(exist_ok=True)
         with repo.connect() as c:c.execute('''create table if not exists artifacts(id TEXT PRIMARY KEY,job_id TEXT NOT NULL,image_name TEXT NOT NULL,path TEXT NOT NULL,data TEXT NOT NULL,UNIQUE(job_id,image_name))''')
     def get(self,aid):
@@ -40,6 +41,15 @@ class Artifacts:
             if storage_path(self.repo.root,row['path']).is_file() and hashlib.sha256(storage_path(self.repo.root,row['path']).read_bytes()).hexdigest()==data['sha256']:
                 self.sync(jid);return data
             raise Fault('ARTIFACT_INTEGRITY','stored artifact missing or changed; no silent overwrite')
+        lineage=None
+        if j.get('plan',{}).get('workflow_image_recipe'):
+            scope=j['native_scope']
+            if scope != self.native_scope():
+                raise Fault('NATIVE_SCOPE_MISMATCH','artifact source differs from current native backend')
+            matches=[e for item in j.get('native_items',{}).values() for e in item.get('native_results',{}).get('entries',[])
+                     if e.get('status')=='available' and e.get('image',{}).get('image_name')==name and e.get('lineage')]
+            if len(matches)!=1:raise Fault('ARTIFACT_NOT_LINKED','verified selected IMAGE lineage required')
+            lineage=matches[0]['lineage']
         self.repo.update(jid,changes={'artifact_state':'fetching'},event='artifact.fetch_intent')
         try:
             raw=bytearray()
@@ -51,7 +61,12 @@ class Artifacts:
             with Image.open(io.BytesIO(raw)) as im:
                 if im.width*im.height>MAX_PIXELS or im.format not in ('PNG','JPEG'):raise Fault('IMAGE_LIMIT','unsupported image or pixel limit')
                 im.load();width,height=im.size;mime='image/png' if im.format=='PNG' else 'image/jpeg'
+                pixels_sha256=hashlib.sha256(im.tobytes()).hexdigest();image_mode=im.mode
             data={'artifact_id':aid,'job_id':jid,'image_name':name,'sha256':hashlib.sha256(raw).hexdigest(),'size':len(raw),'width':width,'height':height,'mime':mime,'embedding_state':'disabled'}
+            if lineage:
+                if (width,height)!=(lineage['width'],lineage['height']):
+                    raise Fault('ARTIFACT_INTEGRITY','download dimensions differ from native child result')
+                data.update(native_lineage=lineage,pixels_sha256=pixels_sha256,image_mode=image_mode)
             dest=self.root/aid;tmp=self.root/(aid+'.'+uuid.uuid4().hex+'.part')
             try:
                 with tmp.open('xb') as f:f.write(raw);f.flush();os.fsync(f.fileno())

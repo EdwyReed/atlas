@@ -40,9 +40,9 @@ def schema(engine, p):
         data = node.get('data', {}) if isinstance(node, dict) else {}
         if not isinstance(data, dict) or not isinstance(data.get('inputs'), dict):
             raise Fault('WORKFLOW_NODE_UNSUPPORTED', 'native invocation data/inputs required')
-        if (not isinstance(node, dict) or node.get('type') != 'invocation' or data.get('type') not in ('integer', 'workflow_return_value', 'workflow_return') or
-                data.get('version') != '1.0.0' or not isinstance(node.get('id'), str) or node['id'] in by_id):
-            raise Fault('WORKFLOW_NODE_UNSUPPORTED', 'observed nodes are outside the integer callable subset')
+        if (not isinstance(node, dict) or node.get('type') != 'invocation' or data.get('type') not in ('integer', 'img_resize', 'workflow_return_value', 'workflow_return') or
+                data.get('version') != ('1.2.2' if data.get('type') == 'img_resize' else '1.0.0') or not isinstance(node.get('id'), str) or node['id'] in by_id):
+            raise Fault('WORKFLOW_NODE_UNSUPPORTED', 'observed nodes are outside the integer/nearest-resize callable subsets')
         by_id[node['id']] = data
         if data['type'] == 'workflow_return':
             returns += 1
@@ -54,6 +54,11 @@ def schema(engine, p):
             keys.append(key)
     if returns != 1 or not keys:
         raise Fault('WORKFLOW_OUTPUT_UNSUPPORTED', 'one explicit return and named return values required')
+    image_recipe = any(n['type'] == 'img_resize' for n in by_id.values())
+    resize = None
+    if image_recipe:
+        from .workflow_images import recipe
+        resize, _, _, _ = recipe(by_id, workflow['edges'])
     inputs = {}
     fields = workflow.get('exposedFields')
     if not isinstance(fields, list) or len(fields) > 32:
@@ -61,12 +66,17 @@ def schema(engine, p):
     for field in fields:
         node_id = field.get('nodeId') if isinstance(field, dict) else None
         name = field.get('fieldName') if isinstance(field, dict) else None
-        if not isinstance(node_id, str) or by_id.get(node_id, {}).get('type') != 'integer' or name != 'value':
-            raise Fault('WORKFLOW_INPUT_UNSUPPORTED', 'only exposed integer.value inputs are supported')
+        image_field = image_recipe and node_id == resize and name in ('image', 'width', 'height')
+        if not isinstance(node_id, str) or not isinstance(name, str) or (not image_field and (by_id.get(node_id, {}).get('type') != 'integer' or name != 'value')):
+            raise Fault('WORKFLOW_INPUT_UNSUPPORTED', 'only exposed integer.value or recipe resize.image/width/height inputs are supported')
         key = 'saved_workflow_input::' + node_id + '::' + name
         if key in inputs or len(key.encode('utf-8')) > 256:
             raise Fault('WORKFLOW_INPUT_UNSUPPORTED', 'duplicate or oversized exposed input')
-        inputs[key] = {'type': 'integer', 'minimum': -(2**63), 'maximum': 2**63-1}
+        inputs[key] = ({'type': 'image', 'reference': 'connection_id/backend_generation/image_name'} if image_field and name == 'image' else
+                       {'type': 'integer', 'minimum': 1, 'maximum': 2048} if image_field else
+                       {'type': 'integer', 'minimum': -(2**63), 'maximum': 2**63-1})
+    if image_recipe and 'saved_workflow_input::' + resize + '::image' not in inputs:
+        raise Fault('WORKFLOW_INPUT_UNSUPPORTED', 'IMAGE recipe must expose resize.image')
     revision = record.get('revision')
     if type(revision) is not int or revision < 1:
         raise Fault('WORKFLOW_SCHEMA_UNSUPPORTED', 'native content revision required')
@@ -74,7 +84,8 @@ def schema(engine, p):
             'observed_revision': revision,
             'observed_sha256': hashlib.sha256(json.dumps(workflow, sort_keys=True, separators=(',', ':'), ensure_ascii=False).encode()).hexdigest(),
             'call_saved_workflow_compatibility': {'is_callable': True, 'reason': 'ok'},
-            'workflow_inputs': inputs, 'observed_return_keys': keys, 'return_type': 'integer',
+            'workflow_inputs': inputs, 'observed_return_keys': keys, 'return_type': 'image' if image_recipe else 'integer',
+            'recipe': 'native-image-resize-v1' if image_recipe else 'integer-v1',
             'version_semantics': 'latest_at_execution', 'executed_revision': None,
             'limits': 'Observed subset only; native reauthorizes and loads by ID at execution. No immutable revision or CPU-only guarantee after edits.'}
 
@@ -89,16 +100,15 @@ def run(engine, p, principal, source):
     if not engine.allow_submit or 'saved_workflow' not in engine.accepted_modes:
         raise Fault('MODE_NOT_ACCEPTED', 'saved_workflow requires explicit accepted_modes and native writes')
     observed = schema(engine, p)
-    if set(p['workflow_inputs']) - set(observed['workflow_inputs']):
-        raise Fault('WORKFLOW_INPUT_UNSUPPORTED', 'input must name an observed exposed integer.value field exactly')
-    if any(type(v) is not int or not -(2**63) <= v < 2**63 for v in p['workflow_inputs'].values()):
-        raise Fault('WORKFLOW_INPUT_UNSUPPORTED', 'literal signed-64-bit integer inputs required')
+    from .workflow_images import inputs
+    native_inputs = inputs(engine, p, observed)
     if p['return_key'] not in observed['observed_return_keys']:
         raise Fault('WORKFLOW_OUTPUT_UNSUPPORTED', 'return key is not an observed literal return name')
     graph = {'id': str(uuid.uuid4()), 'nodes': {'call': {
         'id': 'call', 'type': 'call_saved_workflow', 'workflow_id': p['workflow_id'],
-        'workflow_inputs': p['workflow_inputs'], 'is_intermediate': True, 'use_cache': False}}, 'edges': []}
+        'workflow_inputs': native_inputs, 'is_intermediate': True, 'use_cache': False}}, 'edges': []}
     job, created = engine.repo.reserve(principal, source, p['request_id'], 'generation', p,
         {'native_scope': scope, 'native_ids': [], 'workflow_observation': observed,
-         'plan': {'mode': 'saved_workflow', 'graph': graph, 'workflow_returns': {'call': p['return_key']}}})
+         'plan': {'mode': 'saved_workflow', 'graph': graph, 'workflow_returns': {'call': p['return_key']},
+                  'workflow_image_recipe': observed['return_type'] == 'image'}})
     return engine.execute_submission(job) if created else job
