@@ -9,7 +9,7 @@ from urllib.parse import quote, urlencode
 from .contracts import Fault
 from .repository import digest
 
-MUTATIONS = {'boards.create','boards.update','boards.delete','boards.images.update','models.install','models.job.update','models.lora.install','models.checkpoint.install'}
+MUTATIONS = {'upload.import','boards.create','boards.update','boards.delete','boards.images.update','models.install','models.job.update','models.lora.install','models.checkpoint.install'}
 READS = {'boards.get','boards.images','boards.dates','boards.date','models.jobs','models.job','models.scan','models.starters','models.missing','models.hf.status'}
 OPERATIONS = MUTATIONS | READS
 
@@ -45,7 +45,69 @@ class NativeAdmin:
         return board
     @staticmethod
     def board_result(board):return {'board':board,'revision':digest(board),'concurrency':'GET-before-write; no remote atomic CAS'}
+    def scope(self,p):
+        if not getattr(self.e,'connection_id',None):raise Fault('INVOKE_UNCONFIGURED','configure a native connection')
+        if p['connection_id']!=self.e.connection_id or p['backend_generation']!=self.e.backend_generation:
+            raise Fault('NATIVE_SCOPE_MISMATCH','reference does not match the pinned backend')
+
+    def verify_import(self,job):
+        import hashlib,io
+        from PIL import Image
+        from .artifacts import MAX_BYTES,MAX_PIXELS
+        p=job['payload'];ack=job['native_receipt'];name=ack['image_name']
+        actual=self.e.invoke.call('GET','/api/v1/images/i/'+part(name))
+        expected=job['prepared']
+        if (actual.get('image_name')!=name or actual.get('board_id')!=p['board_id'] or
+            actual.get('is_intermediate') is not False or
+            any(actual.get(k)!=expected[k] for k in ('width','height'))):
+            raise Fault('REMOTE_VERIFY','image identity/dimensions/routing readback mismatch')
+        if p['board_id'] is not None:
+            self.board(p['board_id'])
+            names=self.e.invoke.call('GET','/api/v1/boards/'+part(p['board_id'])+'/image_names')
+            if name not in names:raise Fault('REMOTE_VERIFY','image missing from exact board')
+        raw=bytearray()
+        with self.e.invoke.http.stream('GET','/api/v1/images/i/'+part(name)+'/full') as response:
+            if response.status_code!=200:raise Fault('REMOTE_VERIFY','native image bytes unavailable')
+            for chunk in response.iter_bytes():
+                if len(raw)+len(chunk)>MAX_BYTES:raise Fault('IMAGE_LIMIT','native image too large')
+                raw.extend(chunk)
+        row=self.e.uploads.row(p['upload_id']);original=row['bytes']
+        if hashlib.sha256(original).hexdigest()!=expected['sha256']:raise Fault('UPLOAD_INTEGRITY','original changed')
+        submitted,representation=self.e.uploads.native_representation(row,p['family'])
+        if representation!=expected['native_representation']:raise Fault('UPLOAD_INTEGRITY','native representation changed')
+        with Image.open(io.BytesIO(raw)) as native,Image.open(io.BytesIO(submitted)) as source:
+            if native.width*native.height>MAX_PIXELS:
+                raise Fault('IMAGE_LIMIT','native pixel budget exceeded')
+            native.load();source.load()
+            if native.size!=source.size or native.mode!=source.mode or native.tobytes()!=source.tobytes():
+                raise Fault('REMOTE_VERIFY','native pixels differ from explicit submitted representation')
+        artifact=self.e.artifacts.capture_upload(job['id'],name,original)
+        native_representation={**representation,'download_sha256':hashlib.sha256(raw).hexdigest(),
+            'download_size':len(raw),'original_sha256':expected['sha256'],'upload_id':p['upload_id'],
+            'import_job_id':job['id'],'image_name':name,**{k:p[k] for k in ('connection_id','backend_generation')}}
+        # Repair the crash window between durable ACK and upload linkage.
+        import json
+        from .repository import dump
+        with self.e.repo.connect() as db:
+            db.execute('BEGIN IMMEDIATE')
+            row=db.execute('select data from uploads where id=?',(p['upload_id'],)).fetchone()
+            meta=json.loads(row['data']);meta.update({'image_name':name,'family':p['family'],
+                'native_verified':native_representation})
+            db.execute("update uploads set state='imported',data=? where id=?",(dump(meta),p['upload_id']))
+        return {'reference':{k:p[k] for k in ('connection_id','backend_generation','board_id')},
+                'image_name':name,'upload_id':p['upload_id'],'native':actual,
+                'original':artifact,'family':p['family'],'role':expected['role'],
+                'native_representation':native_representation,'native_bytes_sha256':native_representation['download_sha256']}
+
+    def verify_ack(self,job):
+        p=job['payload'];op=p['operation']
+        if op=='upload.import':return self.verify_import(job)
+        b=self.board(job['native_receipt']['board_id'])
+        if b.get('board_name')!=p['name']:raise Fault('REMOTE_VERIFY','board creation readback mismatch')
+        return self.board_result(b)
+
     def call(self,op,p,principal,source):
+        if op in MUTATIONS and (op.startswith('boards.') or op=='upload.import'):self.scope(p)
         if op in MUTATIONS and not self.enabled:raise Fault('ADMIN_WRITES_DISABLED','native writes disabled in explicit read-only mode')
         if op in ('models.install','models.scan') and p['source_id'] not in self.sources:raise Fault('NOT_FOUND','model source alias not configured')
         # Serializes our own checks/writes, including multiple Engine instances.
@@ -57,6 +119,10 @@ class NativeAdmin:
             old=self.e.repo.request(principal,p['request_id'],'native_admin',payload)
             if old:
                 if old['state']=='submitting':old=self.e.repo.update(old['id'],'ack_unknown',expected={'submitting'},event='admin.ambiguous_no_replay')[0]
+                if old['state']=='ack_unknown' and old.get('native_receipt') and op in ('upload.import','boards.create'):
+                    try:result=self.verify_ack(old)
+                    except Exception:return old
+                    return self.e.repo.update(old['id'],'succeeded',{'result':result},expected={'ack_unknown'},event='admin.get_verified')[0]
                 return old
             prepared=self.prepare(op,p,principal)
             job,created=self.e.repo.reserve(principal,source,p['request_id'],'native_admin',payload,{'prepared':prepared})
@@ -94,6 +160,10 @@ class NativeAdmin:
         path={'models.starters':'starter_models','models.missing':'missing','models.hf.status':'hf_login'}[op]
         return inv.call('GET','/api/v2/models/'+path)
     def prepare(self,op,p,principal):
+        if op=='upload.import':
+            result=self.e.uploads.prepare_import(p)
+            if p['board_id'] is not None:self.board(p['board_id'])
+            return result
         if op in ('models.lora.install','models.checkpoint.install'):
             from .lora_install import descriptor
             from .lora_windows import parse_link, InstallError
@@ -130,6 +200,9 @@ class NativeAdmin:
         return {}
     def mutate(self,op,p,prepared,principal,job_id):
         inv=self.e.invoke
+        if op=='upload.import':
+            self.e.uploads.send_import(p,job_id)
+            return self.verify_import(self.e.repo.get(job_id))
         if op in ('models.lora.install','models.checkpoint.install'):
             from .lora_install import execute
             return execute(self.policy,p,model_type='Checkpoint') if op=='models.checkpoint.install' else execute(self.policy,p)

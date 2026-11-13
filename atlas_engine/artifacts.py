@@ -71,3 +71,29 @@ class Artifacts:
         if offset>d['size']:raise Fault('RANGE','offset outside artifact')
         with p.open('rb') as f:f.seek(offset);b=f.read(size)
         return {**d,'offset':offset,'base64':base64.b64encode(b).decode(),'eof':offset+len(b)==d['size']}
+
+    def capture_upload(self,jid,name,raw):
+        """Preserve ingress bytes, not the native server's PNG re-encoding."""
+        with self.lock:
+            aid=str(uuid.uuid5(uuid.NAMESPACE_URL,'atlas-upload-original:'+jid))
+            with self.repo.connect() as c:old=c.execute('select data from artifacts where id=?',(aid,)).fetchone()
+            if old:
+                self.read(aid,0,1)
+                return json.loads(old[0])
+            if len(raw)>MAX_BYTES:raise Fault('IMAGE_LIMIT','original artifact byte budget exceeded')
+            with Image.open(io.BytesIO(raw)) as im:
+                if im.width*im.height>MAX_PIXELS:raise Fault('IMAGE_LIMIT','original artifact pixel budget exceeded')
+                im.load();width,height=im.size;mime='image/png' if im.format=='PNG' else 'image/jpeg'
+            data={'artifact_id':aid,'job_id':jid,'image_name':name,'sha256':hashlib.sha256(raw).hexdigest(),
+                  'size':len(raw),'width':width,'height':height,'mime':mime,'representation':'original-upload','embedding_state':'disabled'}
+            dest=self.root/aid
+            # A crash before the SQLite commit may leave our deterministic file.
+            if dest.exists():
+                if dest.read_bytes()!=raw:raise Fault('ARTIFACT_INTEGRITY','original artifact differs; no overwrite')
+            else:
+                with dest.open('xb') as f:f.write(raw);f.flush();os.fsync(f.fileno())
+            fd=os.open(self.root,os.O_RDONLY)
+            try:os.fsync(fd)
+            finally:os.close(fd)
+            with self.repo.connect() as c:c.execute('insert into artifacts values(?,?,?,?,?)',(aid,jid,name,str(dest.resolve()),dump(data)))
+            return data

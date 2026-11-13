@@ -1,6 +1,6 @@
 # Atlas
 
-Standalone headless Atlas, development package 0.4.0.dev11. The canonical corpus is embedded Qdrant; operational state is SQLite. HTTP, Streamable HTTP MCP and a thin CLI share the existing Engine dispatch. Hermes and InvokeAI are optional clients/backend integrations, not startup dependencies.
+Standalone headless Atlas, development package 0.4.0.dev12. The canonical corpus is embedded Qdrant; operational state is SQLite. HTTP, Streamable HTTP MCP and a thin CLI share the existing Engine dispatch. Hermes and InvokeAI are optional clients/backend integrations, not startup dependencies.
 
 This is a development package, not completion of the full Atlas product. Installed dev10 now also passes the narrow original InvokeAI full-server CPU/no-model flow documented below. See [SPEC.md](SPEC.md) and [OPERATIONS.json](OPERATIONS.json) for retained capabilities and exercised scope. No UI is delivered.
 
@@ -75,6 +75,57 @@ Put it in `connections` before the first start of a NEW state root. The binding 
 
 For local semantic encoding, install `atlas-engine[semantic]` from this source and provide compatible local-only weights under `state/cache/fastembed`. Startup never installs or downloads models. Missing vocabulary, InvokeAI, references or media bindings produce explicit unavailable/disabled results while the corpus remains usable. Merely listing an operation does not certify an optional backend or an inference result.
 
+## Native image imports and boards — dev12
+
+Use an explicitly provisioned native connection on a NEW state root, as above, with `enable_writes: true`. This enables native administration independently of GPU generation policy. No model or generation is needed to import bytes. Every import and board mutation requires the exact configured `connection_id`, `backend_generation` and a durable `request_id`. An import also requires explicit `board_id`: a real native board ID or JSON `null` for uncategorized. Upload `project` is attribution only, never an implicit board/project mapping.
+
+Public ingress accepts one PNG/JPEG, at most 32 MiB and 24 Mi pixels, without animation or EXIF rotation. Preserve these existing family rules:
+
+| family / role | Public bytes and native representation |
+|---|---|
+| `pixel` / `image` | RGB PNG only, without transparency, ICC profile or EXIF rotation; original bytes sent without flattening |
+| `sd-1` or `anima` / `image` | Existing PNG/JPEG ingress, including RGBA PNG; original bytes sent unchanged; do not apply pixel-family restrictions |
+| `sd-1` or `anima` / `mask` | Grayscale **L PNG**, public white=edit / black=preserve. Explicit `white-edit-to-black-edit-invert-L-v1` sends `255 - value` as native L PNG, without resizing or thresholding |
+
+`pixel` masks are refused. Family labels do not load models or certify inference. Download verification compares native pixels/mode/dimensions to the explicitly submitted representation (inverted for masks), not to original mask identity. GPU inpaint polarity and visual correctness remain unaccepted; existing recipes and policy gates are retained.
+
+Using the authenticated HTTP operation endpoint, CLI or MCP:
+
+1. `upload.begin`: `{"request_id":"ingress-1","size":1234,"sha256":"SHA256_OF_ORIGINAL_BYTES","role":"mask"}`. Optional `project` is attribution.
+2. `upload.chunk`: returned `upload_id`, contiguous `offset`, and `base64` of at most 32768 decoded bytes. Exact duplicate chunks are safe; conflicting bytes fail.
+3. `upload.finalize`: `{"upload_id":"UPLOAD"}`. Check `state: ready`; finalization verifies declared size/hash and decode.
+4. Import with a **separate request ID**, for example:
+
+```sh
+atlas-client upload.import --token-file token --arguments \
+  '{"request_id":"import-1","connection_id":"local-invoke","backend_generation":"operator-declared-generation-1","upload_id":"UPLOAD","family":"sd-1","board_id":null}'
+```
+
+`POST /v1/ops/upload.import` accepts that same JSON object with `Authorization: Bearer …`; MCP `upload_import` takes identical fields. A successful operation envelope is not a completed import: inspect `result.state`. `succeeded` contains `result.image_name`, scoped `reference`, exact native DTO, `family`, `role`, immutable `original` artifact and separate `native_representation`. The latter records transform, submitted `sha256`/size/mode/pixel hash, observed native `download_sha256`/size, original SHA-256 and upload/job/native-image/connection lineage. Top-level `native_bytes_sha256` is the observed **download** hash. Native may re-encode PNG; neither download hash nor submitted mask hash is the original ingress hash.
+
+Read the durable job with `admin.get {"job_id":"JOB"}`. Use `artifact.list {"job_id":"JOB"}` then `artifact.read {"artifact_id":"ARTIFACT","offset":0,"size":32768}` to page the original bytes; decode `base64` through `eof` and verify artifact size/SHA-256/MIME. Native representations are separate receipt metadata, not a second original-byte artifact. `images.get` requires `connection_id`, `backend_generation`, `image_name` and returns current native DTO; it requires native availability, unlike completed local job/artifact reads. MCP names are `admin_get`, `artifact_list`, `artifact_read`, `images_get`.
+
+Create a board using `boards.create {"connection_id":"local-invoke","backend_generation":"operator-declared-generation-1","request_id":"board-1","name":"Owned imports"}`. Inspect its job state and use `result.board.board_id` in import. `boards.get {"board_id":"BOARD"}` returns current board/revision; `boards.images {"board_id":"BOARD"}` lists native names (`"none"` means uncategorized). To move selected images:
+
+```json
+{"connection_id":"local-invoke","backend_generation":"operator-declared-generation-1","request_id":"move-1","action":"move","board_id":"DESTINATION_BOARD","image_names":["EXACT_NATIVE_IMAGE_NAME"]}
+```
+
+Pass this object to `boards.images.update` / MCP `boards_images_update`. `add` also targets an explicit destination; `remove` requires `board_id:null`. Native membership is authoritative. Board update/delete use an `expected_revision` from `boards.get`; these checks serialize Atlas writes but are GET-before-write, **not remote atomic CAS**. This dev12 full-server acceptance exercises create/import/read/move, not all board administration.
+
+One finalized upload authorizes at most one immutable native import intent. Scope/family/board changes under the same request ID conflict. A new request ID cannot reuse a fenced upload. Exact replay returns the saved job, without another POST. An ACK lost before Atlas knows the native ID stays `ack_unknown` across replay/restart: never match/adopt by bytes, filename or board name and never start a fresh import to conceal uncertainty. A durably saved exact native ACK allows GET-only readback recovery. A failed verification is also unknown, not permission to POST again. Only a verified import becomes available to existing mask recipe consumers. Completed receipts are historical observations; later board moves do not rewrite them.
+
+Repeat only on owned disposable environments (NEW private output, no live target):
+
+```sh
+/absolute/atlas-venv/bin/python -I -B verification/native_fullserver.py --images-boards \
+  --native-python /absolute/owned-native-venv/bin/python \
+  --wheel /absolute/path/to/atlas_engine-0.4.0.dev12-py3-none-any.whl \
+  --out /new/private/images-boards-evidence
+```
+
+The installed host runner uses the pinned original launcher, services, multiuser auth and fresh migrations. Synthetic RGB/JPEG/RGBA/asymmetric L inputs establish upload/readback/transform/artifact behavior without GPU, models or generation. Lost replies, wrong mask download, process death, restart, exact replay and native-offline local reads are exercised through HTTP and SDK MCP. Retain old dev12 receipts separately when replacing this unpublished candidate wheel. Docker remains dev10; no live deployment or full migration acceptance is implied.
+
 ## Optional standalone CPU censor
 
 Set `"media_config_file":"media.json"` in atlas.json. This optional module needs a separately provisioned, trusted NTD11 Python environment, existing model and anime-mosaic renderer; none are bundled or downloaded by Atlas. No Hermes configuration or service is needed. Example operator-owned media.json:
@@ -133,7 +184,7 @@ The dev9 synthetic object acceptance establishes actual CPU model execution, bin
 
 ## Native workspace prompt subset
 
-The registry currently has 115 operations (counted from the shared input schemas). Listing an operation does not certify its backend; `OPERATIONS.json` records the exercised boundary.
+The registry currently has 121 operations (counted from the shared input schemas). Listing an operation does not certify its backend; `OPERATIONS.json` records the exercised boundary.
 
 `projects.get` and `projects.savePrompt` implement a narrow InvokeAI 7 split-v4 codec: an existing layered workspace (`settingsLayering=1`), canvas compatibility at most v2 and an explicitly selected `generate` widget. A save changes only `widgetInstances[id].state.values.positivePrompt`; opaque content and all other workspace values are preserved. This does not create workspaces, migrate documents, resolve inherited defaults, compile workflows or support arbitrary Canvas editing.
 

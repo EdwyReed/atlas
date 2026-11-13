@@ -75,7 +75,9 @@ def attach_metadata(
     edges.append(edge("meta", "metadata", "l2i", "metadata"))
 
 def wire_inpaint(nodes, edges, *, init_name: str, mask_name: str, i2l_type: str, strength: float, tiled: bool) -> None:
-    """Wire img2latent + denoise mask. White mask = edit region.
+    """Wire img2latent + native denoise mask. Public white=edit masks are
+    explicitly inverted by upload.import before this graph uses their native ID.
+    GPU polarity/visual correctness still requires separate acceptance.
 
     SD1.5/SDXL: create_denoise_mask (needs SD/SDXL VAE).
     Anima: create_gradient_mask without VAE — create_denoise_mask rejects Anima VAE

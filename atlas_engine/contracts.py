@@ -151,13 +151,20 @@ class UploadRef(Strict): upload_id: str = Field(min_length=1,max_length=128)
 class UploadChunk(UploadRef):
     offset: int = Field(ge=0,le=32*1024*1024)
     base64: str = Field(min_length=1,max_length=43692)
-class UploadImport(UploadRef): family: Literal['sd-1','anima','pixel']
+class BackendScope(Strict):
+    connection_id: str = Field(min_length=1,max_length=128)
+    backend_generation: str = Field(min_length=1,max_length=128)
+class UploadImport(UploadRef,BackendScope):
+    request_id: str = Field(min_length=1,max_length=128)
+    family: Literal['sd-1','anima','pixel']
+    board_id: str | None = Field(min_length=1,max_length=200)
+class NativeImage(BackendScope): image_name: str = Field(min_length=1,max_length=200)
 # Native administration is typed and separately gated from GPU submission.
 class BoardRef(Strict): board_id: str = Field(min_length=1,max_length=200)
 class BoardDate(Strict): date: str = Field(pattern=r'^\d{4}-\d{2}-\d{2}$')
 class Mutation(Strict): request_id: str = Field(min_length=1,max_length=128)
-class BoardCreate(Mutation): name: str = Field(min_length=1,max_length=300)
-class BoardUpdate(BoardRef,Mutation):
+class BoardCreate(Mutation,BackendScope): name: str = Field(min_length=1,max_length=300)
+class BoardUpdate(BoardRef,Mutation,BackendScope):
     project: str | None = Field(default=None,min_length=1,max_length=128)
     expected_revision: str = Field(pattern='^[a-f0-9]{64}$')
     name: str | None = Field(default=None,min_length=1,max_length=300)
@@ -165,10 +172,10 @@ class BoardUpdate(BoardRef,Mutation):
     cover_image_name: str | None = Field(default=None,min_length=1,max_length=200)
     clear_cover: bool = False
     visibility: Literal['private','shared','public'] | None = None
-class BoardDelete(BoardRef,Mutation):
+class BoardDelete(BoardRef,Mutation,BackendScope):
     expected_revision: str = Field(pattern='^[a-f0-9]{64}$')
     include_images: bool = False
-class BoardImagesChange(Mutation):
+class BoardImagesChange(Mutation,BackendScope):
     project: str | None = Field(default=None,min_length=1,max_length=128)
     board_id: str | None = Field(default=None,min_length=1,max_length=200)
     action: Literal['add','move','remove']
@@ -197,7 +204,7 @@ SCHEMAS = {
     'loras.create':RecordCreate,'loras.get':RecordRef,'loras.list':ListQuery,'loras.update':RecordUpdate,'loras.delete':RecordChange,'loras.history':RecordHistory,
     'generation.records.create':RecordCreate,'generation.records.get':RecordRef,'generation.records.list':ListQuery,'generation.records.update':RecordUpdate,'generation.records.delete':RecordChange,'generation.records.history':RecordHistory,
     'jobs.events':JobEvents,
-    'admin.get':Ref,
+    'admin.get':Ref,'images.get':NativeImage,
     'boards.get':BoardRef,'boards.images':BoardRef,'boards.dates':Empty,'boards.date':BoardDate,
     'boards.create':BoardCreate,'boards.update':BoardUpdate,'boards.delete':BoardDelete,'boards.images.update':BoardImagesChange,
     'models.install':ModelInstall,'models.jobs':Empty,'models.job':ModelJob,'models.job.update':ModelJobChange,

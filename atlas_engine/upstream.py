@@ -47,8 +47,10 @@ class Invoke(JsonHTTP):
     def acknowledge_enqueue(self,key):
         return self.call('POST',self.qp+'/enqueue_batch/acknowledge',{'idempotency_key':key})
     def cancel(self,nid):return self.call('PUT',self.qp+'/i/'+str(int(nid))+'/cancel')
-    def upload(self,raw,filename):
-        r=self.http.post('/api/v1/images/upload',params={'image_category':'user','is_intermediate':'true'},files={'file':(filename,raw,'image/png' if filename.endswith('.png') else 'image/jpeg')})
+    def upload(self,raw,filename,*,board_id=None,is_intermediate=True):
+        params={'image_category':'user','is_intermediate':str(is_intermediate).lower()}
+        if board_id is not None:params['board_id']=board_id
+        r=self.http.post('/api/v1/images/upload',params=params,files={'file':(filename,raw,'image/png' if filename.endswith('.png') else 'image/jpeg')})
         if r.status_code>=300:raise Fault('UPLOAD_HTTP','native upload rejected')
         return r.json()
 class Atlas(JsonHTTP):

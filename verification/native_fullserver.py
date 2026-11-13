@@ -39,6 +39,7 @@ def main():
     p.add_argument('--out', required=True, type=Path)
     p.add_argument('--native-python', required=True, type=Path)
     p.add_argument('--wheel', required=True, type=Path)
+    p.add_argument('--images-boards', action='store_true', help='exercise native image/board lifecycle instead of integer graphs')
     a = p.parse_args()
     out = a.out.absolute()
     out.mkdir(parents=True, exist_ok=False, mode=0o700)
@@ -54,6 +55,14 @@ def main():
     assert payload == expected
     (out/'module-equality.json').write_text(json.dumps({'source': str(source), 'installed': str(installed), 'modules': actual,
         'version': importlib.metadata.version('atlas-engine'), 'wheel_sha256': hashlib.sha256(a.wheel.read_bytes()).hexdigest()}, indent=2))
+    def native_manifest():
+        code="""import hashlib,json,os,invokeai;from pathlib import Path
+root=Path(next(iter(invokeai.__path__)))
+files=list(root.rglob('*.py'))+[Path(__import__('sys').executable).with_name('invokeai-web')]
+print(json.dumps({str(p):{'sha256':hashlib.sha256(p.read_bytes()).hexdigest(),'inode':p.stat().st_ino,'realpath':str(p.resolve())} for p in files},sort_keys=True))"""
+        return json.loads(subprocess.check_output([str(a.native_python),'-I','-B','-c',code],text=True))
+    native_before=native_manifest()
+    (out/'native-runtime-before.json').write_text(json.dumps(native_before,indent=2))
     np, ap = free_port(), free_port()
     nu, au = f'http://127.0.0.1:{np}', f'http://127.0.0.1:{ap}'
     root = out/'native'
@@ -66,8 +75,9 @@ def main():
            'OMP_NUM_THREADS': '2', 'OPENBLAS_NUM_THREADS': '2', 'MPLCONFIGDIR': str(out/'mpl-cache')}
     native_argv = [str(a.native_python), '-I', '-B', str(a.native_python.with_name('invokeai-web')), '--root', str(root)]
     processes, all_processes, logs, calls, responses, checks = {}, [], [], [], [], []
+    intent_checks=[]
     native_headers = {}
-    mode = {'lost': False, 'missing': False, 'stale': False}
+    mode = {'lost': False, 'missing': False, 'stale': False, 'drop_path': None, 'crash_atlas': False, 'fail_image_get': False}
     class Proxy(BaseHTTPRequestHandler):
         def log_message(self, *args):
             pass
@@ -80,6 +90,21 @@ def main():
             elif body:
                 record['body_bytes'] = len(body)  # Engine.IO polling is not JSON.
             calls.append(record)
+            if a.images_boards and self.command=='POST' and self.path.startswith(('/api/v1/images/upload','/api/v1/boards/','/api/v1/board_images/')):
+                # Independent SQLite connection observes committed intent BEFORE
+                # forwarding the only mutation to the original native server.
+                with sqlite3.connect(out/'state/registry.sqlite3') as db:
+                    db.row_factory=sqlite3.Row
+                    rows=[dict(x) for x in db.execute("select id,state,data from jobs where kind='native_admin' and state='submitting'")]
+                    assert len(rows)==1,rows
+                    job=json.loads(rows[0]['data']);payload=job['payload']
+                    assert payload['connection_id']=='disposable' and payload['backend_generation']=='native-fullserver-1'
+                    if self.path.startswith('/api/v1/images/upload'):
+                        u=db.execute('select * from uploads where id=?',(payload['upload_id'],)).fetchone()
+                        assert u['state']=='importing' and json.loads(u['data'])['import_job_id']==rows[0]['id']
+                        assert hashlib.sha256(u['bytes']).hexdigest()==job['prepared']['sha256']
+                        assert json.loads(u['data'])['import_intent']=={k:v for k,v in payload.items() if k!='operation'}
+                    intent_checks.append({'job_id':rows[0]['id'],'operation':payload['operation'],'scope':{k:payload[k] for k in ('connection_id','backend_generation')},'committed_before_native_forward':True})
             h = {'Content-Type': content_type} if content_type else {}
             if self.headers.get('Authorization'):
                 h['Authorization'] = self.headers['Authorization']
@@ -100,6 +125,20 @@ def main():
                 assert r.status_code < 300, r.text
                 self.close_connection = True
                 return
+            if self.command=='POST' and mode.get('drop_path') and self.path.startswith(mode['drop_path']):
+                mode['drop_path']=None
+                assert r.is_success,r.text
+                if mode.get('crash_atlas'):
+                    processes['atlas'].kill()
+                    processes['atlas'].wait(timeout=10)
+                    mode['crash_atlas']=False
+                self.close_connection=True
+                return
+            if self.command=='GET' and mode.get('fail_image_get') and self.path.startswith('/api/v1/images/i/'):
+                mode['fail_image_get']=False
+                r=httpx.Response(503,json={'detail':'injected verification read failure'})
+            if self.command=='GET' and mode.get('replace_full') and self.path.endswith('/full'):
+                r=httpx.Response(200,content=mode.pop('replace_full'),headers={'Content-Type':'image/png'})
             try:
                 self.send_response(r.status_code)
                 self.send_header('Content-Type', r.headers.get('Content-Type', 'application/octet-stream'))
@@ -240,6 +279,11 @@ def main():
         config.write_text(json.dumps({'root': 'state', 'clients_file': 'clients.json', 'policy_file': 'policy.json', 'port': ap, 'connections': [{'id': 'disposable', 'backend_generation': 'native-fullserver-1', 'account_scope': user['user_id'], 'url': f'http://127.0.0.1:{proxy.server_port}', 'token_file': 'native-token', 'enable_writes': True}]}))
         passed('original launcher/bootstrap/multiuser setup/login/me; missing/wrong token/password and repeated setup refused')
         start_atlas()
+        if a.images_boards:
+            sys.path.insert(0,str(Path(__file__).absolute().parent))
+            from native_images_boards import run
+            run(locals())
+            return
         for _ in range(100):
             event_status = op('status', {})['native_events']
             if event_status and event_status.get('connected'):
@@ -353,7 +397,11 @@ def main():
                 log.close()
             save('calls.json', calls)
             save('responses.json', responses)
+            save('intent-checks.json',intent_checks)
             save('cleanup.json', {'children': [{'name': name, 'pid': proc.pid, 'returncode': proc.poll()} for name, proc in all_processes], 'owned_running': sum(proc.poll() is None for _, proc in all_processes), 'proxy_running': thread.is_alive()})
+            native_after=native_manifest()
+            save('native-runtime-after.json',native_after)
+            assert native_before==native_after,'reused native package/launcher changed'
 
 
 if __name__ == '__main__':

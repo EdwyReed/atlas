@@ -85,36 +85,67 @@ class Uploads:
         with self.repo.connect() as c:
             c.execute("update uploads set state='aborted',bytes=? where id=? and state in ('receiving','ready')",(b'',uid))
         return self.view(self.row(uid))
-    def import_native(self,p,principal,enabled):
-        if not enabled:raise Fault('SUBMISSION_DISABLED','native uploads disabled; bytes remain local')
-        r=self.row(p['upload_id']);meta=json.loads(r['data']);family=p['family']
-        if family=='pixel':validate_pixel_bytes(r['bytes'])
-        if r['state']=='imported':
-            if meta.get('family')!=family:raise Fault('IDEMPOTENCY_CONFLICT','native upload family differs')
-            return self.view(r)
-        if r['state']!='ready':raise Fault('UPLOAD_STATE','must finalize; uncertain import requires reconciliation, never blind retry')
-        if r['role']=='mask' and family not in ('sd-1','anima'):raise Fault('MASK_FAMILY','mask requires explicit SD1/Anima family')
+    @staticmethod
+    def native_representation(r,family):
+        """Keep original ingress immutable; invert public white=edit masks only."""
         raw=r['bytes']
+        if len(raw)>MAX_BYTES:raise Fault('IMAGE_LIMIT','upload byte budget exceeded')
+        if r['role']=='mask' and family not in ('sd-1','anima'):
+            raise Fault('MASK_FAMILY','mask requires explicit SD1/Anima family')
+        if family=='pixel':validate_pixel_bytes(raw)
+        transform='identity-v1'
         if r['role']=='mask':
-            # Public white-edit contract. Old CLI differs; GPU polarity is still an
-            # explicit enablement gate, never inferred from this normalization.
             from PIL import ImageOps
+            class BoundedPNG(io.BytesIO):
+                def write(self,b):
+                    if self.tell()+len(b)>MAX_BYTES:raise Fault('IMAGE_LIMIT','native mask byte budget exceeded')
+                    return super().write(b)
             with Image.open(io.BytesIO(raw)) as im:
-                b=io.BytesIO();ImageOps.invert(im).save(b,format='PNG');raw=b.getvalue()
-        meta.update({'family':family,'native_bytes_sha256':hashlib.sha256(raw).hexdigest()})
+                b=BoundedPNG();ImageOps.invert(im).save(b,format='PNG');raw=b.getvalue()
+            transform='white-edit-to-black-edit-invert-L-v1'
+        with Image.open(io.BytesIO(raw)) as im:
+            if im.width*im.height>MAX_PIXELS:raise Fault('IMAGE_LIMIT','native pixel budget exceeded')
+            im.load()
+            representation={'transform':transform,'sha256':hashlib.sha256(raw).hexdigest(),
+                'size':len(raw),'mode':im.mode,'format':im.format,'width':im.width,'height':im.height,
+                'pixels_sha256':hashlib.sha256(im.tobytes()).hexdigest(),
+                'mask_contract':'black-edit-white-preserve' if r['role']=='mask' else None}
+        return raw,representation
+
+    def prepare_import(self,p):
+        r=self.row(p['upload_id'])
+        if r['state']!='ready':raise Fault('UPLOAD_STATE','finalized unused upload required; unknown import cannot be replayed')
+        _,native=self.native_representation(r,p['family'])
+        return {'upload_id':r['id'],'sha256':r['sha256'],'size':r['size'],'role':r['role'],
+                **json.loads(r['data']),'native_representation':native}
+
+    def send_import(self,p,job_id):
+        # One upload cannot authorize two native POSTs, even with new request IDs.
         with self.repo.connect() as c:
             c.execute('BEGIN IMMEDIATE')
-            changed=c.execute("update uploads set state='importing',data=? where id=? and state='ready'",(dump(meta),r['id'])).rowcount
-            if not changed:raise Fault('UPLOAD_STATE','native upload already fenced')
+            r=c.execute('select * from uploads where id=?',(p['upload_id'],)).fetchone()
+            if r['state']!='ready':raise Fault('UPLOAD_STATE','upload already fenced')
+            raw,native=self.native_representation(r,p['family'])
+            if native!=self.repo.get(job_id)['prepared']['native_representation']:
+                raise Fault('UPLOAD_INTEGRITY','prepared native representation changed')
+            meta=json.loads(r['data']);meta.update({'import_job_id':job_id,'import_intent':p,
+                'native_representation':native,'native_bytes_sha256':native['sha256']})
+            c.execute("update uploads set state='importing',data=? where id=?",(dump(meta),r['id']))
         try:
-            response=self.invoke.upload(raw,'mask.png' if r['role']=='mask' else 'source.'+meta['format'].lower())
-            name=response.get('image_name')
-            if not isinstance(name,str) or not name or len(name)>200:raise ValueError('invalid native ACK')
-            meta['image_name']=name
-            with self.repo.connect() as c:c.execute("update uploads set state='imported',data=? where id=?",(dump(meta),r['id']))
+            filename='mask.png' if r['role']=='mask' else 'source.'+meta['format'].lower()
+            ack=self.invoke.upload(raw,filename,board_id=p['board_id'],is_intermediate=False)
+            name=ack.get('image_name')
+            from .native_admin import part
+            if not isinstance(name,str) or not name or len(name)>200:raise Fault('REMOTE_SHAPE','invalid image ACK')
+            part(name)
+            # Commit exact receipt before any verification/download I/O.
+            self.repo.update(job_id,changes={'native_receipt':ack},expected={'submitting'},event='admin.native_acknowledged')
+            # Imported means verified, not merely acknowledged. The durable job
+            # ACK permits GET-only recovery if verification or this process fails.
+            return ack
         except Exception:
-            with self.repo.connect() as c:c.execute("update uploads set state='ack_unknown' where id=?",(r['id'],))
-        return self.view(self.row(r['id']))
+            with self.repo.connect() as c:c.execute("update uploads set state='ack_unknown' where id=? and state='importing'",(r['id'],))
+            raise
     def pixel(self,name):
         with self.repo.connect() as c:r=c.execute("select bytes from uploads where state='imported' and role='image' and json_extract(data,'$.image_name')=?",(name,)).fetchone()
         if not r:return False
