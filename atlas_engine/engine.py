@@ -62,7 +62,7 @@ class Engine:
         if any(w and w.is_alive() for w in (self.thread,getattr(self,'media_thread',None),getattr(self,'cpu_thread',None),getattr(self,'delivery_thread',None),getattr(self,'acquisition_thread',None))):raise Fault('ALREADY_RUNNING','engine worker already running')
         self.stop.clear();self.projection_cursor=''
         self.workspace.recover()
-        self.acquisition.recover()
+        if not getattr(self,'multi_connection',False):self.acquisition.recover()
         self.media.recover()
 
         # Recovery walks indexed active states, never a bounded historical tail.
@@ -77,15 +77,17 @@ class Engine:
         self.cpu_thread=threading.Thread(target=self.creative_loop,name='atlas-creative',daemon=True)
         self.thread=threading.Thread(target=self.loop,name='atlas-observer',daemon=True)
         self.delivery_thread=threading.Thread(target=self.delivery_loop,name='atlas-delivery',daemon=True)
-        self.acquisition_thread=threading.Thread(target=self.acquisition.loop,name='atlas-acquisition',daemon=True)
+        self.acquisition_thread=threading.Thread(target=(lambda: None) if getattr(self,'multi_connection',False) else self.acquisition.loop,name='atlas-acquisition',daemon=True)
         self.media_thread=threading.Thread(target=self.media.loop,name='atlas-media',daemon=True)
         self.media_thread.start()
         self.thread.start();self.cpu_thread.start();self.delivery_thread.start();self.acquisition_thread.start()
         if self.native_events:self.native_events.start()
+        for event in getattr(self,'connection_events',[]):event.start()
     def close(self):
         self.stop.set();self.wake.set()
         self.media.close()
         if self.native_events:self.native_events.close()
+        for event in getattr(self,'connection_events',[]):event.close()
         for worker in (self.thread,getattr(self,'media_thread',None),getattr(self,'cpu_thread',None),getattr(self,'delivery_thread',None),getattr(self,'acquisition_thread',None)):
             if worker:worker.join(timeout=35)
             if worker and worker.is_alive():raise Fault('SHUTDOWN_TIMEOUT','worker did not stop; resources remain open')
@@ -179,10 +181,13 @@ class Engine:
         try:
             if op not in SCHEMAS:raise Fault('UNKNOWN_OPERATION','operation not available')
             p=SCHEMAS[op].model_validate(args).model_dump()
+            p={k:v for k,v in p.items() if not (k in ('connection_id','backend_generation') and v is None)}
             if op=='legacy.request':
                 from .legacy_compat import lookup
                 return {'ok':True,'operation':op,'result':lookup(self.repo,p['namespace'],p['idempotency_key'],p['input'])}
-            result=self.dispatch(op,p,principal,source)
+            from .connections import select
+            context,p=select(self,op,p,principal)
+            result=context.dispatch(op,p,principal,source)
             if op in ('capabilities','status'):
                 result['restore_reconciliation_required']=self.restore_quarantined
                 result['readiness']={
@@ -192,7 +197,12 @@ class Engine:
                               'connection_id':getattr(self,'connection_id',None),
                               'verified':False},
                     'semantic':{'verified':False,'model_downloads':False}}
+                if getattr(self,'connection_contexts',None) is not None:
+                    result['readiness']['invoke']={'configured':bool(self.connection_contexts),'connection_ids':list(self.connection_contexts),'verified':False}
                 if op=='capabilities':
+                    if getattr(self,'connection_contexts',None) is not None:
+                        result['connections']=[{'connection_id':v.connection_id,'backend_generation':v.backend_generation,'writes_enabled':v.allow_submit,'account_scope_verified':False} for v in self.connection_contexts.values()]
+                        result['connection_routing']={'default_connection_id':self.default_connection_id,'persisted_intents':'original binding only','multi_connection_unsupported':['models.acquire.enqueue','models.acquire.resume','models.acquire.select','models.lora.install','models.checkpoint.install']}
                     result['feedback_policy']={'mode':'annotation_only','automatic_ranking_effect':False,'scope':'job-level attributed keep/reject/revise and literal note; callers explicitly edit subsequent inputs'}
                     result['curated_creative']['enabled']=self.vocab.path is not None
                     result['transport_acceptance']='partial; see SPEC.md, operation presence is not execution acceptance'
@@ -203,6 +213,9 @@ class Engine:
             import logging
             logging.getLogger('atlas').error('operation %s failed: %s',op,type(e).__name__)
             return {'ok':False,'operation':op,'error':{'code':'INTERNAL','message':'engine operation failed'}}
+    def native_health(self,key,value=None):
+        if getattr(self,'connection_owner',None) is not None:key=key+':'+self.connection_id
+        return self.repo.health(key,value) if value is not None else self.repo.health(key)
     def creative_context(self,p,principal):
         vocabulary,context=self.curated.prepare(p,self.vocab)
         return CreativeSearch(vocabulary),context
@@ -359,7 +372,10 @@ class Engine:
             return {'reference':{k:p[k] for k in ('connection_id','backend_generation','image_name')},'native':self.invoke.call('GET','/api/v1/images/i/'+part(p['image_name']))}
         if op=='capabilities':return {'schema_version':1,'startup_mode':getattr(self,'startup_mode','embedded-explicit'),'operations':list(SCHEMAS),'scope':'shared-local','attribution_only':['principal','project','owner','source'],'generative_llm':False,'creative_algorithm':'opaque-directed-math-v1+MMR','generation_submit_enabled':self.allow_submit,'generation_modes':sorted(self.accepted_modes),'native_administration':{'writes_enabled':self.native_admin.enabled,'concurrency':'GET-before-write, not native CAS','replay':'uncertain remote effects retained as ack_unknown; never automatically retried'},'artifact_delivery':{'automatic':self.auto_fetch_artifacts,'retry_seconds':10},'projection':{'enabled':bool(self.projection),'mode':'legacy-compatibility-payload-only' if self.projection else 'disabled'},'canonical_corpus':{'enabled':bool(self.corpus),'backend':'qdrant-local','collections':['tags','loras','checkpoints','generations','tag_relations'],'implementation':'bounded raw/history/staged-import v1; legacy stores separate','coordination':'single local owner; serialized revision CAS, not distributed Qdrant CAS','relation_scope':'all_historical_observations','progress_visibility':'completed stages immediately readable; partial explicit'},'curated_creative':{'enabled':True,'max_references':16,'identity':'request-local literal identity lookup'},'saved_workflows':{'mode':'saved_workflow','version_semantics':'explicit latest_at_execution only','inputs':'bounded literal exposed integer.value or native-image-resize-v1 scoped IMAGE and dimensions; exposedFields fallback, no form','output':'one selected signed-64-bit integer or verified native child IMAGE named return; unsupported explicit','provenance':'preflight revision/hash observed only; executed revision unknown','execution':'native call_saved_workflow; existing generation ledger and receipt recovery'},'media_modules':self.media.capabilities(),'image_embeddings':{'enabled':False},'not_enabled':['arbitrary_workflow_run','engine_visual_inference','service_control']}
         if op=='status':
-            return {'observer':self.repo.health('observer'),'native_events':self.repo.health('native_events'),'worker_alive':bool(self.thread and self.thread.is_alive()),'jobs':self.repo.count()}
+            contexts=getattr(self,'connection_contexts',None)
+            states={key:{name:view.native_health(name) for name in ('observer','native_events')} for key,view in (contexts or {}).items()}
+            sole=next(iter(states.values())) if len(states)==1 else {}
+            return {'observer':sole.get('observer',self.native_health('observer')),'native_events':sole.get('native_events',self.native_health('native_events')),'connections':states,'worker_alive':bool(self.thread and self.thread.is_alive()),'jobs':self.repo.count()}
         if op=='enrich':
             creative,context=self.creative_context(p,principal)
             r=creative.enrich(p)
@@ -477,7 +493,7 @@ class Engine:
                 raise
             if item['record']['kind']!=p['kind']:return legacy
             return legacy+[{'id':p['key'],'payload':item['record']['body'],'domain_record':item['record'],'sha256':item['sha256'],'source':'session-delta'}]
-        paths={'boards.list':'/api/v1/boards/?all=true','workflows.list':'/api/v1/workflows/','workflows.get':'/api/v1/workflows/i/'+quote(p.get('key',''),safe=''),'image.metadata':'/api/v1/images/i/'+quote(p.get('key',''),safe='')+'/metadata','images.list':'/api/v1/images/?'+urlencode(p)}
+        paths={'boards.list':'/api/v1/boards/?all=true','workflows.list':'/api/v1/workflows/','workflows.get':'/api/v1/workflows/i/'+quote(p.get('key',''),safe=''),'image.metadata':'/api/v1/images/i/'+quote(p.get('key',''),safe='')+'/metadata','images.list':'/api/v1/images/?'+urlencode({k:v for k,v in p.items() if k not in ('connection_id','backend_generation')})}
         if op in paths:return self.invoke.call('GET',paths[op])
         raise Fault('UNKNOWN_OPERATION','unknown operation')
     def submit_batch(self,p,principal,source):
@@ -496,7 +512,7 @@ class Engine:
             for child in children:
                 self.repo.request(principal,child['payload']['request_id'],'generation',child['payload'])
             for child in children:child['plan']=self.plan(child['payload'])
-            group,_=self.repo.reserve(principal,source,p['request_id'],'batch',p,{'prepared_children':children})
+            group,_=self.repo.reserve(principal,source,p['request_id'],'batch',p,{'prepared_children':children,'native_scope':self.native_queue.scope()})
         jobs=self.repo.materialize_batch(group['id'])
         for j in jobs:self.execute_submission(j)
         self.wake.set()
@@ -511,6 +527,9 @@ class Engine:
             group=self.repo.update(jid,state,expected={'queued','observing'},event='batch.aggregate')[0]
         return {**group,'items':[{'job_id':j['id'],'seed':j['payload']['seed'],'native_ids':j.get('native_ids',[]),'outputs':j.get('outputs',[]),'state':j['state'],'board_id':j['payload'].get('board_id')} for j in jobs]}
     def execute_submission(self,j):
+        if getattr(self,'connection_contexts',None) is not None:
+            from .connections import job_context
+            return job_context(self,j).execute_submission(j)
         if not self.allow_submit:raise Fault('SUBMISSION_DISABLED','native writes disabled')
         if j['state']=='queued':
             if j['payload'].get('mode')=='upscale':self.validate_pixel_source(j['payload']['image_name'])
@@ -525,8 +544,11 @@ class Engine:
         except Exception:
             return self.repo.update(j['id'],'ack_unknown',{'error':{'code':'ACK_UNKNOWN','message':'native submission acknowledgment uncertain; will reconcile, never auto-resubmit'}},expected={'submitting'},event='submission.ambiguous')[0]
     def reconcile(self):
+        if getattr(self,'connection_contexts',None) is not None:
+            results={key:view.reconcile() for key,view in self.connection_contexts.items()}
+            return {'connections':results}
         if getattr(self,'startup_mode',None)=='standalone' and self.connection_id is None:
-            return self.repo.health('observer',{'ok':False,'error':'INVOKE_UNCONFIGURED','configured':False})
+            return self.native_health('observer',{'ok':False,'error':'INVOKE_UNCONFIGURED','configured':False})
         with self.observer_lock:
             try:
                 self.native_queue.recover_receipts()
@@ -539,7 +561,7 @@ class Engine:
                     if known.get('native_scope')==self.native_queue.scope() and known.get('native_receipt'):
                         for native_id in known.get('native_ids',[]):receipt_jobs[native_id]=known
                 for item in items:
-                    nid=item['item_id'];seen.add(nid);jid=self.repo.observed_job(nid)
+                    nid=item['item_id'];seen.add(nid);jid=self.repo.observed_job(nid,self.native_queue.scope())
                     known=receipt_jobs.get(nid)
                     if known:
                         if item.get('batch_id')!=known.get('native_batch_id'):raise Fault('NATIVE_IDENTITY_MISMATCH','observed item differs from receipt')
@@ -549,6 +571,8 @@ class Engine:
                         origin=item.get('origin') or '';possible=origin.removeprefix('atlas-engine:') if origin.startswith('atlas-engine:') else ''
                         try:candidate=self.repo.get(possible) if possible else None
                         except Fault:candidate=None
+                        from .connections import owns
+                        if candidate and not owns(self,candidate):continue
                         if candidate and candidate.get('prepared_submission'):
                             # Origin is not a receipt. Wait for exact-ID recovery;
                             # do not invent an external job for our uncertain intent.
@@ -561,7 +585,7 @@ class Engine:
                             j,_=self.repo.reserve(owner,'invokeai-external',f'native:{self.native_queue.scope()}:{self.invoke.base}:{nid}','generation',{'native_item_id':nid,'project':project},{'native_scope':self.native_queue.scope(),'native_ids':[nid],'provenance':'observed_external','author':'unknown','upstream_user_id':item.get('user_id')})
                             jid=j['id']
                     self.native_queue.check(self.repo.get(jid))
-                    self.repo.native(item,jid)
+                    self.repo.native(item,jid,self.native_queue.scope())
                     j=self.repo.get(jid);ids=sorted(set(j.get('native_ids',[])+[nid]));previous=j.get('native_items',{})
                     plan=j.get('plan',{})
                     allowed_nodes=None
@@ -597,10 +621,12 @@ class Engine:
                 if not history and getattr(self,'history_cursor',''):history=self.repo.page('generation',limit=128)
                 self.history_cursor=history[-1]['id'] if history else ''
                 for j in history:
+                    from .connections import owns
+                    if not owns(self,j):continue
                     if j.get('native_ids') and any(n not in seen for n in j['native_ids']) and not j.get('history_missing'):self.repo.update(j['id'],changes={'history_missing':True},event='native.history_missing')
-                return self.repo.health('observer',{'ok':True,'at':time.time(),'seen_items':len(items),'mode':'item_ids+batched-items_by_ids','coverage':'retained visible default queue only; jobs submitted and deleted between polls/offline cannot be recovered'})
+                return self.native_health('observer',{'ok':True,'at':time.time(),'seen_items':len(items),'mode':'item_ids+batched-items_by_ids','coverage':'retained visible default queue only; jobs submitted and deleted between polls/offline cannot be recovered'})
             except Exception as e:
-                return self.repo.health('observer',{'ok':False,'at':time.time(),'error':getattr(e,'code',type(e).__name__),'mode':'item_ids+batched-items_by_ids'})
+                return self.native_health('observer',{'ok':False,'at':time.time(),'error':getattr(e,'code',type(e).__name__),'mode':'item_ids+batched-items_by_ids'})
     @staticmethod
     def compact(item, result_nodes=None, workflow_returns=None):
         d={k:item.get(k) for k in ('item_id','status','status_sequence','batch_id','origin','session_id','created_at','updated_at','error_type')}

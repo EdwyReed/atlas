@@ -24,6 +24,7 @@ class Repository:
             CREATE TABLE IF NOT EXISTS jobs(id TEXT PRIMARY KEY,principal TEXT NOT NULL,request_id TEXT NOT NULL,kind TEXT NOT NULL,hash TEXT NOT NULL,state TEXT NOT NULL,data TEXT NOT NULL,created REAL NOT NULL,updated REAL NOT NULL,UNIQUE(principal,request_id));
             CREATE TABLE IF NOT EXISTS events(seq INTEGER PRIMARY KEY AUTOINCREMENT,job_id TEXT NOT NULL,kind TEXT NOT NULL,data TEXT NOT NULL,at REAL NOT NULL);
             CREATE TABLE IF NOT EXISTS observations(native_id INTEGER PRIMARY KEY,job_id TEXT NOT NULL,item TEXT NOT NULL,at REAL NOT NULL);
+            CREATE TABLE IF NOT EXISTS scoped_observations(scope TEXT NOT NULL,native_id INTEGER NOT NULL,job_id TEXT NOT NULL,item TEXT NOT NULL,at REAL NOT NULL,PRIMARY KEY(scope,native_id));
             CREATE TABLE IF NOT EXISTS feedback(id TEXT PRIMARY KEY,principal TEXT NOT NULL,request_id TEXT NOT NULL,target TEXT NOT NULL,hash TEXT NOT NULL,data TEXT NOT NULL,at REAL NOT NULL,UNIQUE(principal,request_id));
             CREATE TABLE IF NOT EXISTS health(key TEXT PRIMARY KEY,data TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS reviews(principal TEXT NOT NULL,request_id TEXT NOT NULL,job_id TEXT NOT NULL,hash TEXT NOT NULL,data TEXT NOT NULL,PRIMARY KEY(principal,request_id));
@@ -80,6 +81,7 @@ class Repository:
                     ids.append(j['id']);continue
                 cid=str(uuid.uuid4());ids.append(cid)
                 data={'payload':cp,'source_client':group['source_client'],'render_state':'not_submitted','artifact_state':'not_fetched','index_state':'not_indexed','embedding_state':'disabled','plan':child['plan'],'native_ids':[],'batch_job_id':jid}
+                if group.get('native_scope'):data['native_scope']=group['native_scope']
                 c.execute('insert into jobs values(?,?,?,?,?,?,?,?,?)',(cid,row['principal'],cp['request_id'],'generation',h,'queued',dump(data),now,now))
                 c.execute('insert into events(job_id,kind,data,at) values(?,?,?,?)',(cid,'intent.created',dump({'kind':'generation','batch_job_id':jid}),now))
             if group.get('children')==ids:return [self.decode(c.execute('select * from jobs where id=?',(cid,)).fetchone()) for cid in ids]
@@ -150,11 +152,18 @@ class Repository:
             c.execute('insert into events(job_id,kind,data,at) values(?,?,?,?)',
                       (jid,'submission.acknowledged',dump({'state':state,'native_ids':d['native_ids']}),now))
             return self.decode(c.execute('select * from jobs where id=?',(jid,)).fetchone())
-    def native(self,item,jid):
+    def native(self,item,jid,scope=None):
         with self.connect() as c:
-            c.execute('insert into observations values(?,?,?,?) on conflict(native_id) do update set job_id=excluded.job_id,item=excluded.item,at=excluded.at',(item['item_id'],jid,dump(item),time.time()))
-    def observed_job(self,nid):
-        with self.connect() as c:r=c.execute('select job_id from observations where native_id=?',(nid,)).fetchone()
+            if scope is None:
+                c.execute('insert into observations values(?,?,?,?) on conflict(native_id) do update set job_id=excluded.job_id,item=excluded.item,at=excluded.at',(item['item_id'],jid,dump(item),time.time()))
+            else:
+                c.execute('insert into scoped_observations values(?,?,?,?,?) on conflict(scope,native_id) do update set job_id=excluded.job_id,item=excluded.item,at=excluded.at',(dump(scope),item['item_id'],jid,dump(item),time.time()))
+    def observed_job(self,nid,scope=None):
+        with self.connect() as c:
+            r=c.execute('select job_id from observations where native_id=?',(nid,)).fetchone() if scope is None else c.execute('select job_id from scoped_observations where scope=? and native_id=?',(dump(scope),nid)).fetchone()
+            if not r and scope is not None:
+                old=c.execute('select o.job_id,j.data from observations o join jobs j on j.id=o.job_id where o.native_id=?',(nid,)).fetchone()
+                if old and json.loads(old['data']).get('native_scope')==scope:r=old
         return r[0] if r else None
     def record_feedback(self,principal,source,p):
         self.get(p['target_id']);h=digest(p)

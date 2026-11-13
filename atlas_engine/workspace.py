@@ -89,7 +89,9 @@ class Workspace:
             state = 'failed' if job['state'] == 'queued' else 'ack_unknown'
             job = self.e.repo.update(job['id'], state, event='workspace.restart_no_replay')[0]
             if state == 'ack_unknown':
-                self.verify(job)
+                from .connections import job_context
+                try:job_context(self.e,job).workspace.verify(job)
+                except Fault:pass  # Missing original backend never selects a default.
 
     def call(self, op, p, principal, source):
         path = self.scope(p)

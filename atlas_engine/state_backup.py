@@ -19,7 +19,7 @@ from .corpus import COLLECTIONS, FORMAT
 from .repository import dump
 
 INCLUDED = {'registry.sqlite3', 'corpus', 'artifacts', 'media',
-            'connection-binding.json', 'restore-state.json', 'legacy-attachment.json'}
+            'connection-binding.json', 'connection-bindings.json', 'restore-state.json', 'legacy-attachment.json'}
 MARKER = 'restore-state.json'
 READS = {'capabilities', 'status', 'jobs.get', 'jobs.list', 'jobs.page', 'jobs.events',
          'knowledge.get', 'knowledge.search', 'knowledge.history', 'legacy.rows.page',

@@ -97,10 +97,14 @@ class NativeQueue:
         # Includes terminal/zero-admission jobs and crash-after-local-commit.
         # Native owns retention; Atlas never purges receipts or queue history.
         for job in self.e.repo.iter_jobs('generation'):
+            from .connections import owns
+            if not owns(self.e,job):continue
             self.acknowledge(job)
 
     def recover_receipts(self):
         for job in self.e.repo.iter_jobs('generation', {'submitting', 'ack_unknown'}):
+            from .connections import owns
+            if not owns(self.e,job):continue
             if not job.get('prepared_submission'):
                 continue  # Older submissions had no native retry key.
             try:

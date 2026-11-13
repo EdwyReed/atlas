@@ -26,7 +26,8 @@ class Uploads:
         with repo.connect() as c:c.executescript('''
         CREATE TABLE IF NOT EXISTS uploads(id TEXT PRIMARY KEY,principal TEXT NOT NULL,request_id TEXT NOT NULL,hash TEXT NOT NULL,project TEXT,size INTEGER NOT NULL,sha256 TEXT NOT NULL,role TEXT NOT NULL,state TEXT NOT NULL,bytes BLOB NOT NULL,data TEXT NOT NULL,UNIQUE(principal,request_id));
         CREATE INDEX IF NOT EXISTS uploads_native ON uploads(principal,project,state);
-        CREATE UNIQUE INDEX IF NOT EXISTS uploads_native_name ON uploads(json_extract(data,'$.image_name')) WHERE state='imported';
+        DROP INDEX IF EXISTS uploads_native_name;
+        CREATE UNIQUE INDEX IF NOT EXISTS uploads_scoped_native_name ON uploads(json_extract(data,'$.import_intent.connection_id'),json_extract(data,'$.import_intent.backend_generation'),json_extract(data,'$.image_name')) WHERE state='imported';
         ''')
         # A process can die after a successful POST but before local ACK commit.
         with repo.connect() as c:c.execute("update uploads set state='ack_unknown' where state='importing'")
@@ -147,10 +148,15 @@ class Uploads:
             with self.repo.connect() as c:c.execute("update uploads set state='ack_unknown' where id=? and state='importing'",(r['id'],))
             raise
     def pixel(self,name):
-        with self.repo.connect() as c:r=c.execute("select bytes from uploads where state='imported' and role='image' and json_extract(data,'$.image_name')=?",(name,)).fetchone()
+        with self.repo.connect() as c:r=c.execute("select bytes from uploads where state='imported' and role='image' and json_extract(data,'$.image_name')=?"+self.scope_sql()[0],(name,*self.scope_sql()[1])).fetchone()
         if not r:return False
         validate_pixel_bytes(r[0]);return True
     def mask(self,name):
-        with self.repo.connect() as c:r=c.execute("select data from uploads where state='imported' and role='mask' and json_extract(data,'$.image_name')=?",(name,)).fetchone()
+        with self.repo.connect() as c:r=c.execute("select data from uploads where state='imported' and role='mask' and json_extract(data,'$.image_name')=?"+self.scope_sql()[0],(name,*self.scope_sql()[1])).fetchone()
         if not r:raise Fault('MASK_CONTRACT','normalized mask upload required')
         return json.loads(r[0])
+
+    def scope_sql(self):
+        if not hasattr(self,'native_scope'):return '',()
+        scope=self.native_scope()
+        return " and json_extract(data,'$.import_intent.connection_id')=? and json_extract(data,'$.import_intent.backend_generation')=?",(scope['connection_id'],scope['backend_generation'])

@@ -241,3 +241,23 @@ from .media_contracts import OPERATIONS as MEDIA_SCHEMAS
 SCHEMAS.update(MEDIA_SCHEMAS)
 from .workspace_contracts import SCHEMAS as WORKSPACE_SCHEMAS
 SCHEMAS.update(WORKSPACE_SCHEMAS)
+
+# The same optional compatibility scope appears in HTTP, MCP and CLI schemas.
+# Operations with an existing mandatory scope retain that mandatory contract.
+from pydantic import create_model
+NATIVE = {
+    'generation.plan','generation.submit','generation.submitGraph','batch.submit',
+    'catalog.list','catalog.get','catalog.resolve','queue.status','observer.reconcile',
+    'images.get','images.list','image.metadata','boards.list','boards.get','boards.images',
+    'boards.dates','boards.date','boards.create','boards.update','boards.delete','boards.images.update',
+    'workflows.list','workflows.get','workflows.schema','workflows.run',
+    'projects.get','projects.savePrompt','upload.import','models.onboard',
+    'models.install','models.jobs','models.job','models.job.update','models.scan',
+    'models.starters','models.missing','models.hf.status','models.lora.install','models.checkpoint.install',
+}
+for _op in NATIVE | {'enrich', 'dream.submit'}:
+    _base = SCHEMAS[_op]
+    if 'connection_id' not in _base.model_fields:
+        SCHEMAS[_op] = create_model(_base.__name__ + 'Connection', __base__=_base,
+            connection_id=(str | None, Field(default=None, min_length=1, max_length=128)),
+            backend_generation=(str | None, Field(default=None, min_length=1, max_length=128)))

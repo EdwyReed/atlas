@@ -42,9 +42,10 @@ class Artifacts:
                 self.sync(jid);return data
             raise Fault('ARTIFACT_INTEGRITY','stored artifact missing or changed; no silent overwrite')
         lineage=None
+        invoke=self.resolve_backend(j) if hasattr(self,'resolve_backend') else self.invoke
         if j.get('plan',{}).get('workflow_image_recipe'):
             scope=j['native_scope']
-            if scope != self.native_scope():
+            if not hasattr(self,'resolve_backend') and scope != self.native_scope():
                 raise Fault('NATIVE_SCOPE_MISMATCH','artifact source differs from current native backend')
             matches=[e for item in j.get('native_items',{}).values() for e in item.get('native_results',{}).get('entries',[])
                      if e.get('status')=='available' and e.get('image',{}).get('image_name')==name and e.get('lineage')]
@@ -53,7 +54,7 @@ class Artifacts:
         self.repo.update(jid,changes={'artifact_state':'fetching'},event='artifact.fetch_intent')
         try:
             raw=bytearray()
-            with self.invoke.http.stream('GET','/api/v1/images/i/'+quote(name,safe='')+'/full') as r:
+            with invoke.http.stream('GET','/api/v1/images/i/'+quote(name,safe='')+'/full') as r:
                 if r.status_code!=200:raise Fault('ARTIFACT_HTTP','image GET rejected')
                 for chunk in r.iter_bytes():
                     if len(raw)+len(chunk)>MAX_BYTES:raise Fault('IMAGE_LIMIT','image exceeds byte limit')

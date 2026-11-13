@@ -96,7 +96,7 @@ def make_app(engine,clients,port,host='127.0.0.1',container_endpoint=None):
     app=Starlette(routes=[Route('/v1/ops/{operation}',ops,methods=['POST']),Route('/v1/schema',schema),Mount('/mcp',app=mcp_app)],lifespan=lifespan)
     return Auth(app,clients,port,host,container_endpoint)
 def main():
-    from .config import Config, clients, secret, bind_connection
+    from .config import Config, clients, secret, bind_connections
     from .contracts import Fault
     from .upstream import unconfigured
     p=argparse.ArgumentParser(description='Atlas standalone headless daemon')
@@ -114,8 +114,7 @@ def main():
                     config.reference_collections is not None,config.projection_dir,config.media_config_file)):
                 raise ValueError('partial legacy attachment requires offline configuration without backends/projection/media; references are receipt-bound')
         identities=clients(config.clients_file)
-        connection=config.connections[0] if config.connections else None
-        invoke=Invoke(connection.url,secret(connection.token_file)) if connection else unconfigured(Invoke,'INVOKE_UNCONFIGURED')
+        invoke=unconfigured(Invoke,'INVOKE_UNCONFIGURED')
         if config.reference_delta:
             from .stream_delta import StreamReferenceMirror
             from .scoped_delta import ScopedReferenceMirror
@@ -139,21 +138,26 @@ def main():
         with (config.root/'service.lock').open('a') as lock:
             try:fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
             except BlockingIOError:raise Fault('STATE_BUSY','another daemon owns this state root')
-            bind_connection(config.root,connection)
+            manifest=bind_connections(config.root,config.connections,config.migrate_connection_binding)
+            native_clients={c.id:Invoke(c.url,secret(c.token_file)) for c in config.connections}
             from .projection import Projection
             from .state_backup import restore_state
             restored=restore_state(config.root)
             quarantined=bool(restored and not restored['reconciled'])
             projection=Projection(config.projection_dir) if config.projection_dir and not quarantined else None
             policy=json.loads(config.policy_file.read_text()) if config.policy_file else None
-            writes=bool(connection and connection.enable_writes)
+            writes=any(c.enable_writes for c in config.connections)
             engine=Engine(config.root,config.vocabulary,invoke,atlas,writes,policy,
-                          native_events=bool(connection),allow_admin=writes,
+                          native_events=False,allow_admin=writes,
                           projection=projection,corpus_root=config.root/'corpus',
                           civitai_url=config.civitai_url,media_config=media)
             engine.startup_mode='standalone'
-            engine.connection_id=connection.id if connection else None
-            engine.backend_generation=connection.backend_generation if connection else None
+            engine.connection_id=None
+            engine.backend_generation=None
+            from .connections import install
+            install(engine,config,manifest,native_clients)
+            from .events import NativeEvents
+            engine.connection_events=[NativeEvents(v.invoke,engine.repo,engine.native_dirty,engine.wake,v.native_queue.scope()) for v in engine.connection_contexts.values()]
             uvicorn.run(make_app(engine,identities,config.port,config.host,config.container_endpoint),host=config.host,port=config.port,log_level='warning',access_log=False)
     except (OSError,ValueError,Fault) as e:
         p.exit(1,'Atlas startup refused: '+getattr(e,'code',type(e).__name__)+': '+str(e)+'\n')

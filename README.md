@@ -1,12 +1,12 @@
 # Atlas
 
-Standalone headless Atlas, unpublished development candidate 0.4.0.dev14. The canonical corpus is embedded Qdrant; operational state is SQLite. HTTP, Streamable HTTP MCP and a thin CLI share the existing Engine dispatch. Hermes and InvokeAI are optional clients/backend integrations, not startup dependencies.
+Standalone headless Atlas, unpublished development candidate 0.4.0.dev15. The canonical corpus is embedded Qdrant; operational state is SQLite. HTTP, Streamable HTTP MCP and a thin CLI share the existing Engine dispatch. Hermes and InvokeAI are optional clients/backend integrations, not startup dependencies.
 
-This is a development package, not completion of the full Atlas product. Installed dev14 passes the bounded native IMAGE recipe and original integer/no-model regression below. See [SPEC.md](SPEC.md) and [OPERATIONS.json](OPERATIONS.json) for exercised scope. Latest accepted Docker remains dev12; older versioned sections retain historical evidence, not acceptance of newer adapters inside that image. No UI is delivered.
+This is a development package, not completion of the full Atlas product. dev15 adds multiple immutable InvokeAI connections to one daemon/ledger/corpus owner. The original-server two-backend scenario is `verification/multi_connection.py`; [SPEC.md](SPEC.md) and [OPERATIONS.json](OPERATIONS.json) distinguish executed evidence from retained functionality. Latest accepted Docker remains dev12; older versioned sections retain historical evidence, not acceptance of newer adapters inside that image. No UI is delivered.
 
 ## Install and start
 
-dev11 added an explicit offline historical attachment → new quarantined root path, preserving the entire operational ledger and exposing complete knowledge history and raw/literal historical mirror reads. The original mirror remains a pinned external read-only dependency; zero legacy points are relabelled canonical. Full migration/self-contained portability and atomic upstream capture are not claimed. See [ATTACHMENT.md](ATTACHMENT.md). This dev14 slice does not rebuild/deploy Docker.
+dev11 added an explicit offline historical attachment → new quarantined root path, preserving the entire operational ledger and exposing complete knowledge history and raw/literal historical mirror reads. The original mirror remains a pinned external read-only dependency; zero legacy points are relabelled canonical. Full migration/self-contained portability and atomic upstream capture are not claimed. See [ATTACHMENT.md](ATTACHMENT.md). This dev15 slice does not rebuild/deploy Docker.
 
 Linux and Python 3.11 are the first acceptance target. Use a new environment; do not install into an active service environment.
 
@@ -56,7 +56,7 @@ Stop with Ctrl-C/SIGTERM and restart with the same config. Do not open the corpu
 
 Top-level configuration fields are defined in `atlas_engine/config.py`; unknown fields are rejected. Relative paths are resolved against the config file directory. `--root`, `--host`, `--port` explicitly override the file. No environment override or implicit home configuration is used by the standalone loader.
 
-An optional single connection has this shape:
+Each optional connection has this shape:
 
 ```json
 {
@@ -69,7 +69,51 @@ An optional single connection has this shape:
 }
 ```
 
-Put it in `connections` before the first start of a NEW state root. The binding is pinned, including an empty binding; changing it later is refused until a reviewed migration is available. More than one connection is not yet supported. Declaration does not authenticate the backend's identity/version. Native writes default off; do not enable them against a real service without reviewing the retained legacy contracts and obtaining applicable authorization.
+Put entries in `connections` before the first start of a NEW state root. IDs must be unique. The ID, URL, backend generation, operator account scope and logical token-file reference as written in the configuration become immutable in `state/connection-bindings.json`. Token contents can rotate at the same private file reference; Atlas does not disclose references or tokens through capabilities. Declaration does not authenticate the backend's identity/version. Native writes default off; obtain applicable authorization before enabling a real service.
+
+### Two connections, one daemon
+
+Merge this fragment into the configuration above (use your own native token files, mode0600):
+
+```json
+{
+  "connections": [
+    {"id":"studio-a","backend_generation":"a-generation-1","account_scope":"a-native-user","url":"http://127.0.0.1:9090","token_file":"invoke-a.token","enable_writes":false},
+    {"id":"studio-b","backend_generation":"b-generation-1","account_scope":"b-native-user","url":"http://127.0.0.1:9091","token_file":"invoke-b.token","enable_writes":false}
+  ]
+}
+```
+
+Use the intended binding explicitly, including for native IDs that happen to have the same spelling on both servers:
+
+```sh
+../.venv/bin/atlas-client catalog.list --token-file token --arguments \
+  '{"connection_id":"studio-a","backend_generation":"a-generation-1"}'
+../.venv/bin/atlas-client queue.status --token-file token --arguments \
+  '{"connection_id":"studio-b","backend_generation":"b-generation-1"}'
+../.venv/bin/atlas-client projects.get --token-file token --arguments \
+  '{"connection_id":"studio-a","backend_generation":"a-generation-1","project_id":"my-project"}'
+```
+
+The identical JSON goes to HTTP `/v1/ops/catalog.list`, or MCP tool `catalog_list`. Native graph, saved workflow, image/board/import and workspace mutations retain mandatory `connection_id`/`backend_generation` contracts. For an owned no-model server with `enable_writes:true` and policy `accepted_modes:["native_graph"]`, an explicit CPU request is:
+
+```json
+{"connection_id":"studio-a","backend_generation":"a-generation-1","request_id":"integer-1","graph":{"id":"integer-graph","nodes":{"n":{"id":"n","type":"integer","value":17,"is_intermediate":true,"use_cache":false}},"edges":[]},"runs":1}
+```
+
+Submit to `generation.submitGraph` / `generation_submitGraph`; read the returned Atlas job using `generation.get` and its `job_id`. Native item ID alone is never an Atlas job identity. `generation.cancel/retry`, remote `artifact.fetch` and onboarding resume/refresh/recover resolve the persisted job scope, not a default. Local receipts, artifact list/read and already cached fetch remain available with the native service offline. A new remote fetch never falls back to another server. Each native backend still owns its queue; Atlas retains one SQLite ledger and one Qdrant owner, not one database or subprocess per connection.
+
+Unscoped legacy NEW commands use a sole configured connection. With multiple, they refuse `CONNECTION_REQUIRED` unless the operator sets BOTH `compatibility_routing:true` and `default_connection_id:"studio-a"`. This compatibility setting cannot make mandatory scoped schemas optional. New admitted legacy intents store the selected scope; changing the default never reassigns historical intents. Shared `principal+request_id` remains global: the same key with a different backend conflicts before a second remote write. `status.connections` reports per-backend observer/event health.
+
+Existing external Windows LoRA/checkpoint installers and acquisition enqueue/select/resume explicitly return `MULTI_CONNECTION_UNSUPPORTED` with multiple bindings; their background recovery is disabled in that mode. Native HTTP model jobs/install/scan/catalog and registered-file onboarding use their selected connection, but real model installation/source/GPU acceptance is still absent. No application grants/roles are added.
+
+### Existing roots and binding migration
+
+Binding publication requires the daemon's exclusive `service.lock` and refuses an active corpus owner. Stop every owner before migration; editing configuration does not authorize changing persisted history. Config-relative token references retain the same logical spelling after relocating the config/private files. For an earlier unpublished v2 manifest that pinned an absolute resolved token path, explicitly use `migrate_connection_binding:true` at the original credential location first. Only an exact resolved-location match with unchanged ID/URL/account/backend permits conversion; `token_reference_migrations` records old and logical references. A different token reference, even with identical secret bytes, is not token rotation and refuses startup.
+
+Stop Atlas before editing config; keep the existing root and all state. A root with legacy `connection-binding.json` requires one explicit startup with `migrate_connection_binding:true` and the exact original ID/URL/account/backend binding. The new atomic fsynced v2 manifest IS the migration receipt; it keeps the original binding and `legacy_connection_id`. Historical unscoped jobs/index entries use only that original binding. The old file, jobs, corpus, history and artifacts are not replaced or reimported. The legacy file did not record a token reference: this explicit migration pins the configured reference going forward.
+
+To add a connection, retain every existing entry unchanged, append the new entry, and set `migrate_connection_binding:true` for that startup. The manifest records the addition atomically and fsyncs it. Remove that flag after migration. Changing/removing an existing ID/URL/account/backend/token reference refuses startup before native requests, even with the flag. Do not edit the manifest to bypass refusal. Backup/restore includes the v2 binding manifest; existing restored-state reconciliation/quarantine rules still apply. A removed binding is a startup configuration error, whereas an offline bound server does not prevent local receipt/artifact reads.
 
 `vocabulary` optionally names a compatible tags/related SQLite vocabulary. `reference_url`/`reference_token_file`, `reference_collections`, `reference_mirror`/`reference_delta`, `projection_dir`, `policy_file`, `civitai_url` and `media_config_file` retain existing adapters. Media binding contents currently require explicit worker/model paths. Legacy Windows source/install adapters still need their explicit policy/SSH integration and retain platform-specific paths and remote environment/registry credential lookup; they are not a portable installation acceptance result.
 
@@ -360,7 +404,7 @@ The runner creates credentials and an isolated loopback server/root, submits onl
 
 [Build and isolated bridge run](container/README.md) documents the non-root CPU image, private mounted configuration, writable state volume and repeatable `--docker-image` boundary acceptance. The concise [source/packaged/live outcome matrix](SPEC.md#docker-delivery-contract-and-outcome--dev10) separates this delivery from earlier native/media probes. Its base digest and hashed dependency inputs are pinned independently of the package version ranges. HTTP, real MCP and the installed host CLI were exercised against the built image on clean volumes, including auth negatives, duplicate ownership refusal and restart persistence.
 
-The latest accepted CPU Docker image is 0.4.0.dev12 (`atlas-core:cpu-dev12`, immutable ID and source commit in `container/README.md`); dev14 has not been built/run in Docker. The earlier dev10 run used the existing pinned base and dependencies. Accepted in that earlier run: complete source/wheel/installed/image Python module equality, real HTTP/SDK MCP/host CLI, auth/Host/Origin negatives, owner refusal, durable corpus restart/replay, and current workflow public schemas with explicit missing-backend refusal. Shipping native/media adapters does not accept their execution inside this image. The installed `atlas-state` executable also completed populated synthetic offline backup→new-root restore inside the non-root read-only image with networking disabled, exact durable bytes/inventory comparison, shared-lock refusal and quarantine/reconciliation checks; see [BACKUP.md](BACKUP.md). Full legacy migration, native server execution inside the container, GPU jobs and container media inference remain unaccepted (installed host native/censor/mask acceptance is documented above). Source licensing/third-party redistribution, SBOM and release provenance still need release review before publication. No live deployment or public service is part of this delivery.
+The latest accepted CPU Docker image is 0.4.0.dev12 (`atlas-core:cpu-dev12`, immutable ID and source commit in `container/README.md`); dev15 has not been built/run in Docker. The earlier dev10 run used the existing pinned base and dependencies. Accepted in that earlier run: complete source/wheel/installed/image Python module equality, real HTTP/SDK MCP/host CLI, auth/Host/Origin negatives, owner refusal, durable corpus restart/replay, and current workflow public schemas with explicit missing-backend refusal. Shipping native/media adapters does not accept their execution inside this image. The installed `atlas-state` executable also completed populated synthetic offline backup→new-root restore inside the non-root read-only image with networking disabled, exact durable bytes/inventory comparison, shared-lock refusal and quarantine/reconciliation checks; see [BACKUP.md](BACKUP.md). Full legacy migration, native server execution inside the container, GPU jobs and container media inference remain unaccepted (installed host native/censor/mask acceptance is documented above). Source licensing/third-party redistribution, SBOM and release provenance still need release review before publication. No live deployment or public service is part of this delivery.
 
 ## Populated literal search and numerical creative discovery
 

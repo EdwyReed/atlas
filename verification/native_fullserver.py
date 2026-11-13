@@ -34,6 +34,20 @@ def free_port():
         return s.getsockname()[1]
 
 
+def native_configuration(port):
+    return f'schema_version: 4.0.2\nhost: 127.0.0.1\nport: {port}\ndevice: cpu\ngeneration_devices: [cpu]\nprecision: float32\npatchmatch: false\nimage_index_enabled: false\nmultiuser: true\nstrict_password_checking: true\nscan_models_on_startup: false\nlog_level: debug\n'
+
+
+def native_environment(python, home, out):
+    return {'PATH': str(python.parent)+':/usr/bin:/bin', 'HOME': str(home), 'TMPDIR': os.environ['TMPDIR'],
+            'HF_HUB_OFFLINE': '1', 'TRANSFORMERS_OFFLINE': '1', 'CUDA_VISIBLE_DEVICES': '',
+            'OMP_NUM_THREADS': '2', 'OPENBLAS_NUM_THREADS': '2', 'MPLCONFIGDIR': str(out/'mpl-cache')}
+
+
+def native_command(python, root):
+    return [str(python), '-I', '-B', str(python.with_name('invokeai-web')), '--root', str(root)]
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--out', required=True, type=Path)
@@ -70,13 +84,11 @@ print(json.dumps({str(p):{'sha256':hashlib.sha256(p.read_bytes()).hexdigest(),'i
     nu, au = f'http://127.0.0.1:{np}', f'http://127.0.0.1:{ap}'
     root = out/'native'
     root.mkdir(mode=0o700)
-    (root/'invokeai.yaml').write_text(f'schema_version: 4.0.2\nhost: 127.0.0.1\nport: {np}\ndevice: cpu\ngeneration_devices: [cpu]\nprecision: float32\npatchmatch: false\nimage_index_enabled: false\nmultiuser: true\nstrict_password_checking: true\nscan_models_on_startup: false\nlog_level: debug\n')
+    (root/'invokeai.yaml').write_text(native_configuration(np))
     home = out/'empty-home'
     home.mkdir()
-    env = {'PATH': str(a.native_python.parent)+':/usr/bin:/bin', 'HOME': str(home), 'TMPDIR': os.environ['TMPDIR'],
-           'HF_HUB_OFFLINE': '1', 'TRANSFORMERS_OFFLINE': '1', 'CUDA_VISIBLE_DEVICES': '',
-           'OMP_NUM_THREADS': '2', 'OPENBLAS_NUM_THREADS': '2', 'MPLCONFIGDIR': str(out/'mpl-cache')}
-    native_argv = [str(a.native_python), '-I', '-B', str(a.native_python.with_name('invokeai-web')), '--root', str(root)]
+    env = native_environment(a.native_python,home,out)
+    native_argv = native_command(a.native_python,root)
     processes, all_processes, logs, calls, responses, checks = {}, [], [], [], [], []
     intent_checks=[]
     native_headers = {}
