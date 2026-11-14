@@ -20,7 +20,10 @@ async def engine_call(engine, op, arguments, principal, source):
     import time
     from .reference_reader import read_budget, READ_SECONDS
     canceled = threading.Event()
-    deadline = time.monotonic() + READ_SECONDS
+    # Canonical CPU embedding is cold derived work, not a15s reference probe.
+    # It remains bounded and cooperatively canceled between encoder batches.
+    seconds = 300.0 if op == 'search' and arguments.get('mode') in ('semantic','hybrid') and engine.semantic else READ_SECONDS
+    deadline = time.monotonic() + seconds
     def work():
         from .contracts import Fault
         try:
@@ -29,7 +32,7 @@ async def engine_call(engine, op, arguments, principal, source):
         except Fault as e:
             return {'ok':False,'operation':op,'error':{'code':e.code,'message':str(e)}}
     try:
-        return await asyncio.wait_for(asyncio.to_thread(work), READ_SECONDS + 1)
+        return await asyncio.wait_for(asyncio.to_thread(work), seconds + 1)
     except asyncio.TimeoutError:
         return {'ok':False,'operation':op,'error':{'code':'TIMEOUT','message':'reference read deadline exceeded'}}
     finally:
@@ -37,8 +40,9 @@ async def engine_call(engine, op, arguments, principal, source):
         canceled.set()
 
 class Auth:
-    def __init__(self,app,clients,port,host='127.0.0.1',container_endpoint=None):
+    def __init__(self,app,clients,port,host='127.0.0.1',container_endpoint=None,public_anonymous=False):
         self.app=app;self.clients=clients
+        self.public_anonymous=public_anonymous
         address='['+host+']' if ':' in host else host
         self.hosts={address+':'+str(port),'localhost:'+str(port)}
         if container_endpoint is not None:
@@ -47,6 +51,12 @@ class Auth:
     async def __call__(self,scope,receive,send):
         if scope['type']!='http':return await self.app(scope,receive,send)
         pairs=scope.get('headers',[]);headers=dict(pairs)
+        if self.public_anonymous:
+            # Explicit old deployment contract: credentials are attribution only,
+            # including unknown credentials and the public reverse-proxy Host.
+            auth=headers.get(b'authorization',b'')
+            scope['atlas_identity']=next((c for c in self.clients if hmac.compare_digest(auth,('Bearer '+c['token']).encode())),{'principal':'anonymous','source':'atlas-public-alpha'})
+            return await self.app(scope,receive,send)
         if any(sum(k==name for k,_ in pairs)>1 for name in (b'host',b'origin',b'authorization')):
             return await JSONResponse({'error':'duplicate security header'},400)(scope,receive,send)
         if (headers.get(b'host',b'').decode('latin1').lower() not in self.hosts or
@@ -59,7 +69,7 @@ class Auth:
         scope['atlas_identity']=identity
         await self.app(scope,receive,send)
 
-def make_app(engine,clients,port,host='127.0.0.1',container_endpoint=None):
+def make_app(engine,clients,port,host='127.0.0.1',container_endpoint=None,public_anonymous=False,public_assets_dir=None):
     mcp=Server('atlas-engine')
     @mcp.list_tools()
     async def list_tools():
@@ -94,7 +104,10 @@ def make_app(engine,clients,port,host='127.0.0.1',container_endpoint=None):
             async with manager.run():yield
         finally:await asyncio.to_thread(engine.close)
     app=Starlette(routes=[Route('/v1/ops/{operation}',ops,methods=['POST']),Route('/v1/schema',schema),Mount('/mcp',app=mcp_app)],lifespan=lifespan)
-    return Auth(app,clients,port,host,container_endpoint)
+    if public_anonymous:
+        from .public_surface import attach
+        app=attach(app,engine,public_assets_dir)
+    return Auth(app,clients,port,host,container_endpoint,public_anonymous)
 def main():
     from .config import Config, clients, secret, bind_connections
     from .contracts import Fault
@@ -115,7 +128,24 @@ def main():
                 raise ValueError('partial legacy attachment requires offline configuration without backends/projection/media; references are receipt-bound')
         identities=clients(config.clients_file)
         invoke=unconfigured(Invoke,'INVOKE_UNCONFIGURED')
-        if config.reference_delta:
+        portable = config.root/'portable-state.json'
+        if portable.exists():
+            if any((config.checkpoint_attachment, config.reference_mirror, config.reference_delta, config.reference_url, config.reference_collections is not None, config.vocabulary)):
+                raise ValueError('portable state owns historical reference/vocabulary bindings; omit external overrides')
+            from .portable import reference
+            atlas=reference(config.root) or unconfigured(Atlas,'REFERENCE_UNCONFIGURED')
+            metadata=json.loads(portable.read_text())
+            if metadata['vocabulary']: config.vocabulary=config.root/'vocabulary.sqlite3'
+        elif config.checkpoint_attachment:
+            # Reference only: never seed/rebind an adopted journal or rewrite
+            # its historical attachment-owner code pin with successor bytes.
+            if restored and restored.get('migration_kind') == 'canonical-dev20-adoption-v1':
+                receipt=json.loads((config.root/'adoption-receipt.json').read_text())
+                if receipt['plan']['attachment'] != str(config.checkpoint_attachment):
+                    raise ValueError('adopted historical attachment binding differs')
+            from .sealed_delta import reference
+            atlas=reference(config.checkpoint_attachment)
+        elif config.reference_delta:
             from .stream_delta import StreamReferenceMirror
             from .scoped_delta import ScopedReferenceMirror
             cls=StreamReferenceMirror if json.loads((config.reference_delta/'receipt.json').read_text()).get('format')=='atlas-stream-delta-v1' else ScopedReferenceMirror
@@ -150,7 +180,7 @@ def main():
             engine=Engine(config.root,config.vocabulary,invoke,atlas,writes,policy,
                           native_events=False,allow_admin=writes,
                           projection=projection,corpus_root=config.root/'corpus',
-                          civitai_url=config.civitai_url,media_config=media)
+                          civitai_url=config.civitai_url,media_config=media,civitai_token=secret(config.civitai_token_file))
             engine.startup_mode='standalone'
             engine.connection_id=None
             engine.backend_generation=None
@@ -158,7 +188,7 @@ def main():
             install(engine,config,manifest,native_clients)
             from .events import NativeEvents
             engine.connection_events=[NativeEvents(v.invoke,engine.repo,engine.native_dirty,engine.wake,v.native_queue.scope()) for v in engine.connection_contexts.values()]
-            uvicorn.run(make_app(engine,identities,config.port,config.host,config.container_endpoint),host=config.host,port=config.port,log_level='warning',access_log=False)
+            uvicorn.run(make_app(engine,identities,config.port,config.host,config.container_endpoint,config.public_anonymous_compatibility,config.public_assets_dir),host=config.host,port=config.port,log_level='warning',access_log=False)
     except (OSError,ValueError,Fault) as e:
         p.exit(1,'Atlas startup refused: '+getattr(e,'code',type(e).__name__)+': '+str(e)+'\n')
 if __name__=='__main__':main()

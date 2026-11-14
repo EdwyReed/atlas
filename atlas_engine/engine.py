@@ -9,10 +9,22 @@ from .graphs import _find,_model_ref,_build_graph
 
 TERMINAL={'succeeded','partially_succeeded','failed','canceled'}
 class Engine:
-    def __init__(self,root,vocabulary,invoke,atlas,allow_submit=False,policy=None,native_events=False,projection=None,allow_admin=False,corpus_root=None,civitai_url='https://civitai.red',media_config=None):
+    def __init__(self,root,vocabulary,invoke,atlas,allow_submit=False,policy=None,native_events=False,projection=None,allow_admin=False,corpus_root=None,civitai_url='https://civitai.red',media_config=None,civitai_token=''):
         from .state_backup import restore_state
         state=restore_state(root)
         self.restore_quarantined=bool(state and not state['reconciled'])
+        from .adoption_control import held_state
+        self.held_admission=held_state(root,state)
+        self.adopted_reference_readable=False
+        if state and state.get('portable_restore'):
+            import json
+            from pathlib import Path
+            self.adopted_reference_readable=bool(json.loads((Path(root)/'portable-state.json').read_text())['attachment'])
+        if state and state.get('migration_kind')=='canonical-dev20-adoption-v1':
+            import json
+            from pathlib import Path
+            receipt=json.loads((Path(root)/'adoption-receipt.json').read_text())
+            self.adopted_reference_readable=bool(receipt['plan']['attachment'])
         self.attachment=None
         if state and state.get('migration_kind')=='legacy-attachment-partial-v1':
             from .attachment import Attachment
@@ -28,11 +40,18 @@ class Engine:
         self.records=Records(self.repo)
         from .corpus import Corpus
         self.corpus=Corpus(corpus_root,self.repo) if corpus_root is not None else None
-        self.invoke=invoke;self.atlas=atlas;self.allow_submit=allow_submit
+        from .adoption_native import enabled
+        self.native_activated=enabled(self)
+        self.historical_item_ids=set()
+        if self.native_activated:
+            for jid in self.held_admission['historical_native_ids']:
+                self.historical_item_ids.update(self.repo.get(jid).get('native_ids',[]))
+        self.invoke=invoke;self.atlas=atlas;self.allow_submit=allow_submit and (not self.held_admission or self.native_activated)
         from .onboarding import Onboarding
-        self.onboarding=Onboarding(self,civitai_url)
+        self.onboarding=Onboarding(self,civitai_url,civitai_token)
         from .native_admin import NativeAdmin
         self.native_admin=NativeAdmin(self,policy,allow_admin)
+        if self.held_admission and not self.native_activated:self.native_admin.enabled=False
         from .workspace import Workspace
         self.workspace=Workspace(self)
         from .native_queue import NativeQueue
@@ -52,6 +71,8 @@ class Engine:
         self.native_origins=(policy or {}).get('native_owners',{})
         from .text_embedding import TextEncoder
         self.text_encoder=TextEncoder(self.repo.root/'cache'/'fastembed')
+        from .semantic import CanonicalSemantic
+        self.semantic=CanonicalSemantic(self.corpus,self.text_encoder) if self.corpus else None
         self.stop=threading.Event();self.wake=threading.Event();self.native_dirty=threading.Event();self.thread=None;self.observer_lock=threading.Lock()
         from .events import NativeEvents
         self.native_events=NativeEvents(invoke,self.repo,self.native_dirty,self.wake) if native_events else None
@@ -61,6 +82,16 @@ class Engine:
         if self.restore_quarantined:return
         if any(w and w.is_alive() for w in (self.thread,getattr(self,'media_thread',None),getattr(self,'cpu_thread',None),getattr(self,'delivery_thread',None),getattr(self,'acquisition_thread',None))):raise Fault('ALREADY_RUNNING','engine worker already running')
         self.stop.clear();self.projection_cursor=''
+        if self.held_admission and not self.native_activated:
+            # Historical remote uncertainty owns no live local worker. Only the
+            # ordinary CPU/media workers run; no remote recovery/events/delivery.
+            self.media.recover()
+            for j in self.repo.iter_jobs('dream',{'running'}):
+                self.repo.update(j['id'],'queued',expected={'running'},event='dream.restart_replay')
+            self.cpu_thread=threading.Thread(target=self.creative_loop,name='atlas-creative',daemon=True)
+            self.media_thread=threading.Thread(target=self.media.loop,name='atlas-media',daemon=True)
+            self.cpu_thread.start();self.media_thread.start()
+            return
         self.workspace.recover()
         if not getattr(self,'multi_connection',False):self.acquisition.recover()
         self.media.recover()
@@ -69,10 +100,13 @@ class Engine:
         for j in self.repo.iter_jobs('dream',{'running'}):
             self.repo.update(j['id'],'queued',expected={'running'},event='dream.restart_replay')
         for j in self.repo.iter_jobs('generation',{'submitting'}):
+            if self.historical_native(j):continue
             self.repo.update(j['id'],'ack_unknown',expected={'submitting'},event='submission.restart_ambiguous')
         for j in self.repo.iter_jobs('native_admin',{'queued'}):
+            if self.historical_native(j):continue
             self.repo.update(j['id'],'failed',{'error':{'code':'ADMIN_NOT_SENT','message':'process stopped before native I/O; no automatic administration replay'}},expected={'queued'},event='admin.restart_not_sent')
         for j in self.repo.iter_jobs('native_admin',{'submitting'}):
+            if self.historical_native(j):continue
             self.repo.update(j['id'],'ack_unknown',expected={'submitting'},event='admin.restart_ambiguous_no_replay')
         self.cpu_thread=threading.Thread(target=self.creative_loop,name='atlas-creative',daemon=True)
         self.thread=threading.Thread(target=self.loop,name='atlas-observer',daemon=True)
@@ -92,8 +126,12 @@ class Engine:
             if worker:worker.join(timeout=35)
             if worker and worker.is_alive():raise Fault('SHUTDOWN_TIMEOUT','worker did not stop; resources remain open')
         if self.projection:self.projection.close()
+        if self.semantic:self.semantic.close()
         if self.corpus:self.corpus.close()
 
+    def historical_native(self,job):
+        from .adoption_native import historical
+        return historical(self,job)
     def creative_loop(self):
         while not self.stop.is_set():
             try:
@@ -135,6 +173,7 @@ class Engine:
                     groups=self.repo.page('batch',{'queued','observing'},after=batch_cursor,limit=4)
                     batch_cursor=groups[-1]['id'] if groups else ''
                     for group in groups:
+                        if self.historical_native(group):continue
                         if self.stop.is_set():break
                         self.repo.materialize_batch(group['id'])
                         self.get_batch(group['id'])
@@ -142,6 +181,7 @@ class Engine:
                     cursor=rows[-1]['id'] if rows else ''
                     for j in rows:
                         if self.stop.is_set():break
+                        if self.historical_native(j):continue
                         if not j.get('plan'):continue
                         try:self.execute_submission(j)
                         except Fault as e:self.repo.update(j['id'],'failed',{'error':{'code':e.code,'message':str(e)}},expected={'queued'},event='submission.policy_rejected')
@@ -154,6 +194,7 @@ class Engine:
         self.projection_cursor=rows[-1]['id'] if rows else ''
         for j in rows:
             # Administration is operational audit, never a creative recipe.
+            if self.historical_native(j):continue
             if j['kind'] in ('native_admin','native_workspace','corpus','onboarding','acquisition','acquisition_batch','mask','censor'):continue
             feedback=self.repo.feedback(j['id']);reviews=self.repo.reviews(j['id'])
             h=digest({k:j.get(k) for k in ('state','payload','result','outputs','artifact_state','artifacts','native_ids')}|{'feedback':feedback,'reviews':reviews})
@@ -166,6 +207,7 @@ class Engine:
         rows=self.repo.page('generation',TERMINAL,after=getattr(self,'artifact_cursor',''),limit=16)
         for j in rows:
             self.artifact_cursor=j['id']
+            if self.historical_native(j):continue
             if not j.get('outputs') or j.get('artifact_retry_at',0)>time.time():continue
             names={a['image_name'] for a in j.get('artifacts',[])}
             missing=[name for name in j['outputs'] if name not in names]
@@ -181,7 +223,7 @@ class Engine:
         try:
             if op not in SCHEMAS:raise Fault('UNKNOWN_OPERATION','operation not available')
             p=SCHEMAS[op].model_validate(args).model_dump()
-            p={k:v for k,v in p.items() if not (k in ('connection_id','backend_generation') and v is None)}
+            p={k:v for k,v in p.items() if not (k in ('connection_id','backend_generation','installer','output_upscaler') and v is None)}
             if op=='legacy.request':
                 from .legacy_compat import lookup
                 return {'ok':True,'operation':op,'result':lookup(self.repo,p['namespace'],p['idempotency_key'],p['input'])}
@@ -190,6 +232,8 @@ class Engine:
             result=context.dispatch(op,p,principal,source)
             if op in ('capabilities','status'):
                 result['restore_reconciliation_required']=self.restore_quarantined
+                result['held_intents']={'admission':self.held_admission['admission'],'count':len(self.held_admission['held_rows']),'native_effects':bool(self.allow_submit),'automatic_observer':self.native_activated,'historical_immutable':True} if self.held_admission else None
+                result['local_workers']={name:bool(getattr(self,name,None) and getattr(self,name).is_alive()) for name in ('cpu_thread','media_thread')}
                 result['readiness']={
                     'core':True,'canonical_corpus':bool(self.corpus),
                     'vocabulary':self.vocab.path is not None,
@@ -232,6 +276,16 @@ class Engine:
         return models,model,ls
     def plan(self,p):
         result=self._plan(p)
+        if p.get('output_upscaler'):
+            if p['mode']=='upscale':raise Fault('MODE_ARGUMENTS','output_upscaler composes diffusion then learned upscale; standalone upscale already selects its model')
+            if p['width']*p['height']*p['scale']**2>24*1024*1024:raise Fault('IMAGE_LIMIT','recipe output exceeds pixel budget')
+            from .image_graphs import append_output_upscale
+            upscaler=_find(self.invoke.models(),p['output_upscaler'],'spandrel_image_to_image')
+            append_output_upscale(result['graph'],upscaler,p['scale'])
+            result['recipe_version']='atlas-'+p['mode']+'-learned-upscale-v1'
+            result['resolved_output_upscaler']=_model_ref(upscaler)
+            result['requested_output_scale']=p['scale']
+            result.setdefault('warnings',[]).append('One native graph: diffusion -> learned pixels, tile512, native multiple-of-eight fit. Non-upscaling models can ignore scale; actual output dimensions come from native artifacts. GPU/visual acceptance remains pending.')
         if p.get('board_id'):
             from .image_graphs import apply_board
             for node in result['graph']['nodes'].values():
@@ -271,26 +325,34 @@ class Engine:
             return {'recipe_version':'atlas-spandrel-plan-v1','mode':'upscale','graph':g,'resolved_model':_model_ref(m),'submit_enabled':False,'warnings':['Planning retained; image upload/pixel-family GPU acceptance required before enabling submission.']}
         if not p['prompt']:raise Fault('VALIDATION','text/inpaint generation requires prompt')
         models,m,ls=self.resolve(p)
-        if p['mode']=='inpaint':
+        if p['mode'] in ('inpaint','refinement'):
             from .image_graphs import sd1_graph,anima_graph
-            if not p['image_name'] or not p['mask_name']:raise Fault('VALIDATION','inpaint requires existing image_name and mask_name')
-            ims=[self.invoke.call('GET','/api/v1/images/i/'+quote(n,safe='')) for n in (p['image_name'],p['mask_name'])]
+            refinement=p['mode']=='refinement'
+            if not p['image_name'] or (not refinement and not p['mask_name']):raise Fault('VALIDATION','image_name required; inpaint also requires mask_name')
+            if refinement and p['mask_name']:raise Fault('MODE_ARGUMENTS','refinement is full-image img2img; use inpaint for masks')
+            ims=[self.invoke.call('GET','/api/v1/images/i/'+quote(n,safe='')) for n in (p['image_name'],p['mask_name']) if n]
             if any((im['width'],im['height'])!=(p['width'],p['height']) for im in ims):raise Fault('RESIZE_REQUIRED','source/mask size must match; no silent resize')
-            mask=self.uploads.mask(p['mask_name'])
-            if mask['family']!=m['base']:raise Fault('MASK_FAMILY','normalized mask family differs from main model')
+            if not refinement:
+                mask=self.uploads.mask(p['mask_name'])
+                if mask['family']!=m['base']:raise Fault('MASK_FAMILY','normalized mask family differs from main model')
             kw=dict(width=p['width'],height=p['height'],steps=p['steps'],cfg=p['cfg'],seed=p['seed'],scheduler=p['scheduler'],loras=[(l,l['weight']) for l in ls],init_name=p['image_name'],mask_name=p['mask_name'],strength=p['strength'])
             if m['base']=='sd-1':g=sd1_graph(m,p['prompt'],p['negative_prompt'],clip_skip=2,**kw)
             elif m['base']=='anima':
                 from .graphs import _component
                 g=anima_graph(m,_component(models,{},'anima','vae_model','vae','Anima QwenImage VAE'),_component(models,{},'anima','qwen3_encoder_model','qwen3_encoder','Anima Qwen3 0.6B Text Encoder'),p['prompt'],p['negative_prompt'],**kw)
-            else:raise Fault('UNSUPPORTED_MODEL_FAMILY','inpaint planner currently supports SD1/Anima')
-            return {'recipe_version':'atlas-white-edit-inpaint-v2','mode':'inpaint','graph':g,'resolved_model':_model_ref(m),'submit_enabled':False,'warnings':['Owned public white-edit mask normalized through the versioned upload contract. GPU mask polarity and visual correctness remain unaccepted; accepted_modes is an explicit server gate.']}
+            else:raise Fault('UNSUPPORTED_MODEL_FAMILY','image-to-image planner currently supports SD1/Anima')
+            return {'recipe_version':'atlas-refinement-v1' if refinement else 'atlas-white-edit-inpaint-v2','mode':p['mode'],'graph':g,'resolved_model':_model_ref(m),'strength':p['strength'],'submit_enabled':False,'warnings':['Native latent refinement; image dimensions preserved, no silent resize. GPU output remains unaccepted.' if refinement else 'Owned public white-edit mask normalized through the versioned upload contract. GPU mask polarity and visual correctness remain unaccepted; accepted_modes is an explicit server gate.']}
         g=_build_graph(models,{},m,p['prompt'],p['negative_prompt'],p['seed'],p['width'],p['height'],p['steps'],p['cfg'],p['scheduler'],ls)
         return {'recipe_version':'atlas-txt2img-v1','mode':'txt2img','resolved_model':_model_ref(m),'resolved_loras':[{**_model_ref(l),'weight':l['weight']} for l in ls],'seed':p['seed'],'graph':g,'validation':'graph builder only; GPU family acceptance remains required','submit_enabled':self.allow_submit}
     def dispatch(self,op,p,principal,source):
+        if self.held_admission:
+            from .adoption_control import guard_local
+            from .adoption_native import guard
+            receipt=(guard if self.native_activated else guard_local)(self,op,p,principal)
+            if receipt is not None:return receipt
         if self.restore_quarantined:
             from .state_backup import READS
-            if op not in READS and not (self.attachment is not None and op in ('search','evidence')):
+            if op not in READS and not ((self.attachment is not None or self.adopted_reference_readable) and op in ('search','evidence')):
                 # Exact known intent replay is a local receipt read only.
                 if op in ('projects.savePrompt','generation.submit','generation.submitGraph','workflows.run','batch.submit','corpus.put','corpus.delete','corpus.restore','corpus.import'):
                     kind='native_workspace' if op=='projects.savePrompt' else 'corpus' if op.startswith('corpus.') else 'batch' if op=='batch.submit' else 'generation'
@@ -459,7 +521,7 @@ class Engine:
         if op=='queue.status':return self.invoke.call('GET',self.invoke.qp+'/status')
         if op=='observer.reconcile':return self.reconcile()
         if op=='search':
-            resources=[];tags=[];semantic=[]
+            resources=[];tags=[];semantic=[];canonical_semantic=None
             resource_source={'status':'not_requested'}
             if p['mode'] in ('literal','hybrid'):
                 # Only resource availability may degrade literal search. Authentication,
@@ -477,13 +539,17 @@ class Engine:
                 resources=[x for x in resource_rows if p['query'].lower() in str(x['payload']).lower()][:p['limit']]
                 tags=self.vocab.search(p['query'],p['limit']) if self.vocab.path is not None else []
             if p['mode'] in ('semantic','hybrid'):
-                if getattr(self.atlas,'semantic_enabled',True) is not True:raise Fault('EMBEDDING_SPACE_UNVERIFIED','legacy vectors preserved in quarantine; semantic queries disabled before encoding')
-                vector=self.text_encoder.encode(p['query'])
-                semantic=self.atlas.query(vector,p['limit'])
+                if self.semantic:
+                    canonical_semantic=self.semantic.search(p['query'],p['limit'])
+                    semantic=canonical_semantic['items']
+                else:
+                    if getattr(self.atlas,'semantic_enabled',True) is not True:raise Fault('EMBEDDING_SPACE_UNVERIFIED','legacy vectors preserved in quarantine; semantic queries disabled before encoding')
+                    vector=self.text_encoder.encode(p['query'])
+                    semantic=self.atlas.query(vector,p['limit'])
             # This is application-level literal+dense union, not sparse/dense RRF.
             knowledge=self.knowledge.search(p['query'],limit=p['limit']) if p['mode'] in ('literal','hybrid') else {'items':[],'next_after':None}
             corpus=self.corpus.search(p['query'],p['limit']) if self.corpus and p['mode'] in ('literal','hybrid') else {'items':[],'complete':True}
-            return {'tags':tags,'resources':resources,'knowledge':knowledge,'corpus':corpus,'semantic':semantic,'search_mode':p['mode'],'embedding_space':self.text_encoder.model_name if semantic else None,'fusion':'separate evidence lists; no score comparability claim','partial':resource_source['status']=='unavailable' or not corpus['complete'],'sources':{'resources':resource_source}}
+            return {'tags':tags,'resources':resources,'knowledge':knowledge,'corpus':corpus,'semantic':semantic,'canonical_semantic':canonical_semantic,'search_mode':p['mode'],'embedding_space':self.text_encoder.model_name if canonical_semantic is not None or semantic else None,'fusion':'separate evidence lists; no score comparability claim','partial':resource_source['status']=='unavailable' or not corpus['complete'],'sources':{'resources':resource_source}}
         if op=='evidence':
             legacy=self.atlas.evidence(p['kind'],p['key']) if p['kind'] in ('tag','resource') else []
             if p['kind']=='tag':return legacy
@@ -518,7 +584,9 @@ class Engine:
         self.wake.set()
         return self.get_batch(group['id'])
     def get_batch(self,jid):
-        group=self.require_kind(jid,'batch');jobs=[self.repo.get(cid) for cid in group.get('children',[])]
+        group=self.require_kind(jid,'batch')
+        if self.historical_native(group):return group
+        jobs=[self.repo.get(cid) for cid in group.get('children',[])]
         states=[j['state'] for j in jobs]
         state='observing'
         if len(states)==group['payload']['runs'] and all(s in TERMINAL for s in states):
@@ -527,6 +595,7 @@ class Engine:
             group=self.repo.update(jid,state,expected={'queued','observing'},event='batch.aggregate')[0]
         return {**group,'items':[{'job_id':j['id'],'seed':j['payload']['seed'],'native_ids':j.get('native_ids',[]),'outputs':j.get('outputs',[]),'state':j['state'],'board_id':j['payload'].get('board_id')} for j in jobs]}
     def execute_submission(self,j):
+        if self.historical_native(j):raise Fault('HELD_NATIVE_EFFECT','historical intent cannot be dispatched')
         if getattr(self,'connection_contexts',None) is not None:
             from .connections import job_context
             return job_context(self,j).execute_submission(j)
@@ -553,16 +622,19 @@ class Engine:
             try:
                 self.native_queue.recover_receipts()
                 self.native_queue.maintain_receipts()
-                items=self.invoke.inventory()
+                items=self.invoke.inventory_get(self.stop) if self.native_activated else self.invoke.inventory()
                 if not isinstance(items,list):raise Fault('QUEUE_SCHEMA','list_all must return array')
                 seen=set()
                 receipt_jobs={}
                 for known in self.repo.iter_jobs('generation'):
+                    if self.historical_native(known):continue
                     if known.get('native_scope')==self.native_queue.scope() and known.get('native_receipt'):
                         for native_id in known.get('native_ids',[]):receipt_jobs[native_id]=known
                 for item in items:
                     nid=item['item_id'];seen.add(nid);jid=self.repo.observed_job(nid,self.native_queue.scope())
                     known=receipt_jobs.get(nid)
+                    if self.native_activated and nid in self.historical_item_ids and not known:continue
+                    if jid and self.historical_native(self.repo.get(jid)):continue
                     if known:
                         if item.get('batch_id')!=known.get('native_batch_id'):raise Fault('NATIVE_IDENTITY_MISMATCH','observed item differs from receipt')
                         jid=known['id']
@@ -571,6 +643,7 @@ class Engine:
                         origin=item.get('origin') or '';possible=origin.removeprefix('atlas-engine:') if origin.startswith('atlas-engine:') else ''
                         try:candidate=self.repo.get(possible) if possible else None
                         except Fault:candidate=None
+                        if candidate and self.historical_native(candidate):continue
                         from .connections import owns
                         if candidate and not owns(self,candidate):continue
                         if candidate and candidate.get('prepared_submission'):
@@ -622,6 +695,7 @@ class Engine:
                 self.history_cursor=history[-1]['id'] if history else ''
                 for j in history:
                     from .connections import owns
+                    if self.historical_native(j):continue
                     if not owns(self,j):continue
                     if j.get('native_ids') and any(n not in seen for n in j['native_ids']) and not j.get('history_missing'):self.repo.update(j['id'],changes={'history_missing':True},event='native.history_missing')
                 return self.native_health('observer',{'ok':True,'at':time.time(),'seen_items':len(items),'mode':'item_ids+batched-items_by_ids','coverage':'retained visible default queue only; jobs submitted and deleted between polls/offline cannot be recovered'})

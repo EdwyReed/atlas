@@ -1,0 +1,20 @@
+# Local optional CPU media layer. Named context contains only explicitly selected
+# source/notice files from media-kit.py, NEVER weights or personal runtimes.
+ARG ATLAS_IMAGE=atlas-core:standalone-dev18
+FROM ${ATLAS_IMAGE}
+USER 0:0
+COPY requirements-media.lock /opt/atlas/requirements-media.lock
+RUN apt-get update && apt-get install -y --no-install-recommends libgl1 libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/* \
+    && python -m venv /opt/atlas-media/venv \
+    && /opt/atlas-media/venv/bin/pip install --no-cache-dir --only-binary=:all: --require-hashes \
+       --extra-index-url https://download.pytorch.org/whl/cpu -r /opt/atlas/requirements-media.lock
+COPY requirements-media-onnx.lock /opt/atlas/requirements-media-onnx.lock
+RUN /opt/atlas-media/venv/bin/pip install --no-cache-dir --only-binary=:all: --require-hashes -r /opt/atlas/requirements-media-onnx.lock
+COPY --from=media_sources /mobile-sam /opt/atlas-media/mobile-sam
+COPY --from=media_sources /mask /opt/atlas-media/mask
+COPY --from=media_sources /censor /opt/atlas-media/censor
+COPY container/init-media.py /opt/atlas-media/init.py
+RUN /opt/atlas-media/venv/bin/python -c 'import site;from pathlib import Path;Path(site.getsitepackages()[0],"atlas-media.pth").write_text("/opt/atlas-media/mobile-sam\n")'
+ENV CUDA_VISIBLE_DEVICES="" YOLO_OFFLINE=true YOLO_AUTOINSTALL=false YOLO_CONFIG_DIR=/var/lib/atlas/media-kit/yolo MPLCONFIGDIR=/var/lib/atlas/media-kit/mpl
+USER 10001:10001

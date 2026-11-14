@@ -1,0 +1,14 @@
+# Optional CPU media image; sources/weights are explicit separate operator inputs.
+# Separate interpreter: renderer requires NumPy 1.x, core semantic uses 2.x.
+numpy==1.26.4
+pillow==12.0.0
+torch==2.15.0+cpu
+torchvision==0.29.2+cpu
+timm==1.0.31
+ultralytics>=8.3,<9
+opencv-python==4.11.0.86
+opencv-python-headless==4.11.0.86
+# The unchanged accepted renderer imports imgutils.operate (no detector fallback).
+dghs-imgutils>=0.19,<1
+natsort>=8,<9
+tqdm>=4.67,<5

@@ -1,10 +1,12 @@
 """URL intake schemas without runtime imports (safe in either import order)."""
 from pydantic import BaseModel, ConfigDict, Field
+from typing import Literal
 class Strict(BaseModel):
     model_config = ConfigDict(extra='forbid', strict=True)
 class Enqueue(Strict):
     request_id: str = Field(min_length=1, max_length=128)
     urls: list[str] = Field(min_length=1, max_length=32)
+    installer: Literal['native', 'windows'] | None = None
 class Select(Strict):
     job_id: str = Field(min_length=1, max_length=128)
     file_id: str = Field(pattern=r'^[0-9]+$')

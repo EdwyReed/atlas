@@ -60,6 +60,7 @@ def main():
     p.add_argument('--out', type=Path, required=True)
     p.add_argument('--wheel', type=Path)
     p.add_argument('--native-python', type=Path)
+    p.add_argument('--acquisition', action='store_true', help='Synthetic HTTP native-install lifecycle plus complete onboarding')
     p.add_argument('--child', action='store_true')
     p.add_argument('--config', type=Path)
     a = p.parse_args()
@@ -82,7 +83,10 @@ def main():
     save('module-equality.json', {'modules': actual, 'installed': str(installed),
          'version': atlas_engine.__version__, 'wheel_sha256': sha(a.wheel.read_bytes())})
     checks, responses, calls, processes, logs = [], [], [], {}, []
-    mode = {'crash': False, 'bad_version': False, 'bad_hash': False}
+    mode = {'crash': False, 'bad_version': False, 'bad_hash': False, 'lost_install_ack': False}
+    install_posts=[]
+    install_jobs={}
+    install_inventory=[]
     def passed(text):
         checks.append(text)
         save('checks.json', checks)
@@ -190,7 +194,9 @@ def main():
             models[model_id] = {'id': model_id, 'type': kind, 'creator': {'username': 'owner'+str(model_id)},
                                 'tags': ['model literal', 'do not split'], 'unknown': [None, {'keep': True}]}
             versions[vid] = {'id': vid, 'modelId': model_id, 'trainedWords': [' trigger phrase '],
-                'files': [{'id': vid+2, 'name': name, 'hashes': {'SHA256': digest}, 'unknown': 'file'}],
+                'files': [{'id': vid+2, 'name': name, 'hashes': {'SHA256': digest}, 'unknown': 'file',
+                    'type':'Model','metadata':{'format':'SafeTensor'},
+                    'downloadUrl':base+'/api/download/models/'+str(vid)+'?type=Model&format=SafeTensor'}],
                 'images': [records[author[0]]], 'createdAt': '2026-01-01T00:00:00Z', 'unknown': {'keep': None}}
             params[model_id] = {'request_id': kind+'-initial', 'registered_key': 'owned-'+kind,
                 'registered_path': '/owned/'+name, 'model_id': model_id, 'version_id': vid,
@@ -200,6 +206,18 @@ def main():
     class Source(BaseHTTPRequestHandler):
         def log_message(self, *args):
             pass
+        def do_POST(self):
+            u=urlsplit(self.path);q=parse_qs(u.query)
+            assert u.path=='/api/v2/models/install',self.path
+            assert json.loads(self.rfile.read(int(self.headers['Content-Length'])))=={}
+            selected=int(urlsplit(q['source'][0]).path.rsplit('/',1)[1])//10
+            item=deepcopy(install_inventory[selected-1]);inventory.append(item)
+            nid=len(install_posts)+1
+            install_posts.append({'id':nid,'source':q['source'][0]})
+            install_jobs[nid]={'id':nid,'status':'completed','config_out':{'key':item['key']}}
+            if mode['lost_install_ack']:
+                self.close_connection=True;return
+            return self.send({'id':nid,'status':'waiting'})
         def do_GET(self):
             u = urlsplit(self.path); q = parse_qs(u.query)
             call = {'path': self.path, 'authorization_present': bool(self.headers.get('Authorization'))}
@@ -207,6 +225,8 @@ def main():
             assert not call['authorization_present']
             if u.path == '/api/v2/models/':
                 return self.send({'models': inventory})
+            if u.path.startswith('/api/v2/models/install/'):
+                return self.send(install_jobs[int(u.path.rsplit('/',1)[1])])
             if u.path.startswith('/original/'):
                 iid = int(u.path.rsplit('/', 1)[1].split('.')[0])
                 if mode['crash']:
@@ -266,7 +286,7 @@ def main():
     thread = threading.Thread(target=server.serve_forever, daemon=True); thread.start()
     settings = {'root': 'state', 'clients_file': 'clients.json', 'port': ap, 'civitai_url': base,
         'connections': [{'id': 'synthetic-inventory', 'backend_generation': 'owned-fixture-v1', 'account_scope': 'owned',
-                         'url': base, 'enable_writes': False}]}
+                         'url': base, 'enable_writes': a.acquisition}]}
     config.write_text(json.dumps(settings))
     def image_gets():
         return Counter(c['path'] for c in calls if c['path'].startswith('/original/'))
@@ -296,6 +316,47 @@ def main():
             stop('atlas'); stop('native')
             config.write_text(json.dumps(settings))
         start_atlas()
+        if a.acquisition:
+            install_inventory[:]=deepcopy(inventory);inventory.clear()
+            def acquired(jid):
+                return next(j for j in op('models.acquire.page',{'after':'','limit':100})['items'] if j['id']==jid)
+            scope={'installer':'native'}
+            ids=[]
+            for mid,via in ((1,op),(2,mcp)):
+                args={'request_id':'acquire-'+str(mid),'urls':['https://civitai.red/models/'+str(mid)+'?modelVersionId='+str(mid*10)],**scope}
+                batch=via('models.acquire.enqueue',args);jid=batch['items'][0]['id'];ids.append(jid)
+                for _ in range(600):
+                    job=acquired(jid)
+                    if job['state'] in ('succeeded','failed','partial','needs_input','ack_unknown'):break
+                    time.sleep(.1)
+                assert job['state']=='succeeded',job
+                assert len(install_posts)==mid,install_posts
+                assert via('models.acquire.enqueue',args)['items'][0]['id']==jid
+                result=op('models.onboard.get',{'job_id':job['onboarding']['job_id']})
+                assert result['community']['observed']==30 and result['author']['observed']==35 and not result['partial'],result
+            passed('synthetic native HTTP single-install LoRA/checkpoint -> typed exact hash/key -> all35 author plus30 unique community; HTTP/MCP exact replay')
+            stop('atlas');start_atlas();time.sleep(1)
+            assert len(install_posts)==2
+            assert all(acquired(jid)['state']=='succeeded' for jid in ids)
+            # Fresh state has no historical install receipt; dropped POST reply
+            # must never be inferred from the now matching native inventory.
+            stop('atlas');inventory.clear();mode['lost_install_ack']=True
+            settings['root']='unknown-ack-state';config.write_text(json.dumps(settings));start_atlas()
+            args={'request_id':'lost-ack','urls':['https://civitai.red/models/1?modelVersionId=10'],**scope}
+            jid=op('models.acquire.enqueue',args)['items'][0]['id']
+            for _ in range(200):
+                job=acquired(jid)
+                if job['state']=='ack_unknown':break
+                time.sleep(.1)
+            assert job['state']=='ack_unknown' and 'native_install_id' not in job,job
+            stop('atlas');start_atlas();time.sleep(2)
+            assert acquired(jid)['state']=='ack_unknown'
+            assert op('models.acquire.enqueue',args)['items'][0]['state']=='ack_unknown'
+            assert len(install_posts)==3
+            assert not canonical()['generations']
+            passed('lost native install ACK remains unknown across restart despite matching typed inventory; no reinstall or gallery side effects')
+            save('acquisition-result.json',{'status':'passed','synthetic_native':True,'checks':checks,'install_posts':install_posts})
+            return
         results = {}
         for mid, via in ((1, op), (2, mcp)):
             result = via('models.onboard', params[mid])

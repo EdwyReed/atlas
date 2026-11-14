@@ -6,8 +6,9 @@ import uuid
 
 
 class Container:
-    def __init__(self, image, out, port, token, modules):
+    def __init__(self, image, out, port, token, modules, memory='512m', cpus='1', pids='128'):
         self.image, self.out, self.port = image, out, port
+        self.memory,self.cpus,self.pids=memory,cpus,pids
         self.name = 'atlas-check-' + uuid.uuid4().hex[:12]
         self.state, self.secrets = self.name + '-state', self.name + '-secrets'
         self.run('network', 'create', self.name)
@@ -40,7 +41,7 @@ class Container:
         if not self.created:
             args = ['create', '--name', self.name, '--network', self.name,
                     '--read-only', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges',
-                    '--memory', '512m', '--cpus', '1', '--pids-limit', '128',
+                    '--memory', self.memory, '--cpus', self.cpus, '--pids-limit', self.pids,
                     '--tmpfs', '/tmp:rw,noexec,nosuid,size=32m',
                     '-p', f'127.0.0.1:{self.port}:12088',
                     '-v', self.state + ':/var/lib/atlas',
@@ -66,7 +67,7 @@ class Container:
     def exec(self, args):
         return self.run('exec', self.name, *args, check=False)
 
-    def verify(self):
+    def verify(self, state_root='/var/lib/atlas'):
         code = ('import atlas_engine,hashlib,json,os,sys,importlib.metadata;from pathlib import Path;'
                 'print(json.dumps({"uid":os.getuid(),"python":sys.version,"dependencies":{d.metadata["Name"]:d.version for d in importlib.metadata.distributions()},"modules":{f.name:hashlib.sha256(f.read_bytes()).hexdigest() '
                 'for f in Path(atlas_engine.__file__).parent.glob("*.py")}}))')
@@ -80,7 +81,7 @@ class Container:
         assert 'no-new-privileges' in inspected['HostConfig']['SecurityOpt']
         ownership = json.loads(self.exec(['python', '-I', '-c',
             'import os,json;print(json.dumps({p:[os.stat(p).st_uid,os.stat(p).st_gid] '
-            'for p in ["/var/lib/atlas","/var/lib/atlas/corpus","/run/atlas"]}))']).stdout)
+            'for p in '+repr(['/var/lib/atlas',state_root+'/corpus','/run/atlas'])+'}))']).stdout)
         assert all(ids == [10001, 10001] for ids in ownership.values()), ownership
         value['ownership'] = ownership
         assert json.loads(self.run('network', 'inspect', self.name).stdout)[0]['Driver'] == 'bridge'

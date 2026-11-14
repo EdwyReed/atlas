@@ -74,6 +74,7 @@ class NativeQueue:
         return self.acknowledge(result)
 
     def acknowledge(self, job):
+        if self.e.historical_native(job):return job
         # Read the committed receipt, never acknowledge an in-memory response.
         job = self.e.repo.get(job['id'])
         if not self.e.allow_submit or not job.get('native_receipt') or not job.get('prepared_submission') or job.get('native_receipt_ack') == 'acknowledged':
@@ -103,6 +104,7 @@ class NativeQueue:
 
     def recover_receipts(self):
         for job in self.e.repo.iter_jobs('generation', {'submitting', 'ack_unknown'}):
+            if self.e.historical_native(job):continue
             from .connections import owns
             if not owns(self.e,job):continue
             if not job.get('prepared_submission'):

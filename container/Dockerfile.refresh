@@ -1,0 +1,11 @@
+# Package-only refresh of an already dependency-pinned local Atlas image.
+# Named context atlas_release must contain exactly the intended built wheel.
+# Use the main Dockerfile when runtime dependencies change.
+ARG ATLAS_IMAGE
+FROM ${ATLAS_IMAGE}
+USER 0:0
+COPY --from=atlas_release / /opt/atlas/release/
+RUN pip install --no-cache-dir --no-deps --force-reinstall /opt/atlas/release/*.whl
+# Small provisioning helper update; does not install/enable optional media.
+COPY container/init-media.py /opt/atlas-media/init.py
+USER 10001:10001

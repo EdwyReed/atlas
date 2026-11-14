@@ -42,11 +42,13 @@ def main():
     def model(key,base,kind,name=None):return {'key':key,'hash':'synthetic-hash','name':name or key,'base':base,'type':kind}
     models=[model('sd1','sd-1','main'),model('anima','anima','main'),
         model('vae','anima','vae','Anima QwenImage VAE'),
-        model('encoder','anima','qwen3_encoder','Anima Qwen3 0.6B Text Encoder')]
+        model('encoder','anima','qwen3_encoder','Anima Qwen3 0.6B Text Encoder'),
+        model('upscaler','any','spandrel_image_to_image','Synthetic RealESRGAN_x2plus')]
     def dto(method,path):
         assert method=='GET' and path.startswith('/api/v1/images/i/')
         return {'width':128,'height':96}
     e=Engine.__new__(Engine);e.uploads=uploads;e.invoke=SimpleNamespace(models=lambda:models,call=dto)
+    e.allow_submit=False;e.accepted_modes=set()
     for family,key in [('sd-1','sd1'),('anima','anima')]:
         image,mask=(by_key[(family,role)] for role in ('image','mask'))
         meta=uploads.mask(mask['image_name'])
@@ -63,7 +65,33 @@ def main():
         assert plan['submit_enabled'] is False
         wrong=deepcopy(args);wrong['mask_name']=by_key[('anima' if family=='sd-1' else 'sd-1','mask')]['image_name']
         refused(lambda:e._plan(wrong),'MASK_FAMILY')
+        refine={**args,'mode':'refinement','mask_name':None,'strength':.25}
+        plan=e._plan(refine);g=plan['graph']
+        assert plan['mode']=='refinement' and plan['strength']==.25
+        assert g['nodes']['init']['image']['image_name']==image['image_name']
+        assert g['nodes']['denoise']['denoising_start']==.75
+        assert g['nodes']['i2l']['type']==('i2l' if family=='sd-1' else 'anima_i2l')
+        assert 'mask' not in g['nodes'] and 'inpaint_mask' not in g['nodes']
+        assert any(x['source']=={'node_id':'i2l','field':'latents'} and x['destination']=={'node_id':'denoise','field':'latents'} for x in g['edges'])
+        (a.out/(family+'-refinement.json')).write_text(json.dumps(g))
+        refused(lambda:e._plan({**refine,'mask_name':mask['image_name']}),'MODE_ARGUMENTS')
+        refused(lambda:e._plan({**refine,'width':256}),'RESIZE_REQUIRED')
+        for mode in ('inpaint','refinement','txt2img'):
+            combined={**(args if mode=='inpaint' else refine),'mode':mode,'output_upscaler':'upscaler','scale':2,'board_id':'synthetic-board'}
+            if mode=='txt2img':combined.update(image_name=None,mask_name=None)
+            plan=e.plan(combined);g=plan['graph']
+            assert plan['recipe_version']=='atlas-'+mode+'-learned-upscale-v1'
+            assert plan['resolved_output_upscaler']['key']=='upscaler'
+            decoded='out' if mode=='txt2img' else 'l2i'
+            assert g['nodes'][decoded]['is_intermediate'] is True
+            assert g['nodes']['output_upscale']['is_intermediate'] is False
+            assert g['nodes']['output_upscale']['board']=={'board_id':'synthetic-board'}
+            assert all('board' not in n for nid,n in g['nodes'].items() if nid!='output_upscale')
+            assert any(x['source']=={'node_id':decoded,'field':'image'} and x['destination']=={'node_id':'output_upscale','field':'image'} for x in g['edges'])
+            (a.out/(family+'-'+mode+'-upscale.json')).write_text(json.dumps(g))
     checks.append('actual verified SD1/Anima upload metadata consumed by existing inpaint planners; exact native image/mask IDs; cross-family refusal; synthetic catalog only, no inference')
+    checks.append('SD1/Anima full-image refinement reuses exact verified source IDs and latent wiring; strength=.25 -> denoising_start=.75; no fabricated mask/resize; GPU unverified')
+    checks.append('concrete SD1/Anima inpaint/refinement -> registered learned-upscale templates in one graph, only final pixels boarded; original Invoke graph validation separate, GPU unverified')
     refused(lambda:uploads.pixel(by_key[('sd-1','image')]['image_name']),'PIXEL_FORMAT')
     refused(lambda:uploads.pixel(by_key[('anima','image')]['image_name']),'PIXEL_FORMAT')
     refused(lambda:uploads.mask('unowned-mask.png'),'MASK_CONTRACT')

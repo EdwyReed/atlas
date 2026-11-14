@@ -43,7 +43,7 @@ class Acquisition:
                 j = repo.get(p['job_id'])
                 if j['kind'] != 'acquisition':
                     raise Fault('INVALID_STATE', 'not an acquisition job')
-                if j['state'] in ('queued', 'resolving', 'submitting', 'ack_unknown', 'onboarding', 'succeeded'):
+                if j['state'] in ('queued', 'resolving', 'submitting', 'installing', 'ack_unknown', 'onboarding', 'succeeded'):
                     return j
                 if j['state'] != 'needs_input' or j.get('reason') != 'installer_unavailable':
                     raise Fault('INVALID_STATE', 'only installer-unavailable jobs can be resumed here')
@@ -63,9 +63,15 @@ class Acquisition:
             batch, _ = repo.reserve(principal, source, p['request_id'], 'acquisition_batch', p)
             items = []
             for mid, vid, url in identities:
-                rid = 'acquire:' + digest({'model_id': mid, 'version_id': vid})
-                j, _ = repo.reserve(principal, source, rid, 'acquisition',
-                                    {'model_id': mid, 'version_id': vid}, {'url': url, 'batch_id': batch['id']})
+                native = p.get('installer') == 'native'
+                identity = {'model_id': mid, 'version_id': vid}
+                if native:
+                    identity.update(installer='native', native_scope=self.e.native_queue.scope())
+                rid = 'acquire:' + digest(identity)
+                payload = {'model_id': mid, 'version_id': vid, **({'installer':'native'} if native else {})}
+                extra = {'url':url,'batch_id':batch['id']}
+                if native:extra.update(native_scope=self.e.native_queue.scope(),source_origin=self.e.onboarding.base)
+                j, _ = repo.reserve(principal, source, rid, 'acquisition',payload,extra)
                 items.append(j)
             repo.update(batch['id'], 'succeeded', {'children': [j['id'] for j in items]})
             return {'batch_id': batch['id'], 'items': items}
@@ -73,16 +79,19 @@ class Acquisition:
     def recover(self):
         # Batch children may have been only partly reserved when the process died.
         for b in self.e.repo.iter_jobs('acquisition_batch', {'queued'}):
+            if self.e.historical_native(b):continue
             self.call('models.acquire.enqueue', b['payload'], b['owner_principal'], b['source_client'])
         for j in self.e.repo.iter_jobs('acquisition', {'resolving', 'onboarding', 'submitting'}):
+            if self.e.historical_native(j):continue
             self.e.repo.update(j['id'], 'ack_unknown' if j['state']=='submitting' else 'queued',
                                event='acquisition.recovery_no_remote_replay')
 
     def loop(self):
         while not self.e.stop.is_set():
             if self.e.native_admin.enabled:
-                rows = sorted(self.e.repo.iter_jobs('acquisition', {'queued', 'onboarding', 'ack_unknown'}), key=lambda j:(j['created'], j['id']))
+                rows = sorted(self.e.repo.iter_jobs('acquisition', {'queued', 'onboarding', 'installing', 'ack_unknown'}), key=lambda j:(j['created'], j['id']))
                 for j in rows:
+                    if self.e.historical_native(j):continue
                     if self.e.stop.is_set(): break
                     if j.get('next_attempt', 0) <= time.time(): self.run(j)
             self.e.stop.wait(.5)
@@ -102,14 +111,18 @@ class Acquisition:
         with (self.e.repo.root/'acquisition.lock').open('a') as lock:
             fcntl.flock(lock, fcntl.LOCK_EX)
             j = self.e.repo.get(j['id'])
+            if j['state'] in ('installing','ack_unknown') and j['payload'].get('installer')=='native':
+                return self.native_observe(j)
             if j['state'] == 'ack_unknown': return self.reconcile(j)
             if j['state'] not in ('queued', 'onboarding'): return
             j, _ = self.e.repo.update(j['id'], 'resolving', event='acquisition.resolve')
             try:
+                if j.get('source_origin',self.e.onboarding.base)!=self.e.onboarding.base:
+                    raise Fault('SOURCE_BINDING_CHANGED','acquisition source origin changed')
                 if j.get('installed'): return self.onboard(j, j['installed'], j['resolved'])
                 if not j.get('snapshot'):
                     mid, vid = j['payload']['model_id'], j['payload']['version_id']
-                    model = self.metadata('https://civitai.red/api/v1/models/'+mid)
+                    model = self.metadata(self.e.onboarding.base+'/api/v1/models/'+mid)
                     if str(model.get('id')) != mid: raise Fault('SOURCE_IDENTITY', 'model mismatch')
                     if vid is None:
                         versions = model.get('modelVersions') or []
@@ -121,11 +134,12 @@ class Acquisition:
                 mid = j['payload']['model_id']
                 version = j['snapshot'].get('version')
                 if version is None:
-                    version = self.metadata('https://civitai.red/api/v1/model-versions/'+vid)
+                    version = self.metadata(self.e.onboarding.base+'/api/v1/model-versions/'+vid)
                     if str(version.get('id'))!=vid or str(version.get('modelId'))!=mid:
                         raise Fault('SOURCE_IDENTITY', 'version mismatch')
                     j = self.e.repo.update(j['id'], changes={'snapshot':{**j['snapshot'], 'version':version}})[0]
-                files = [f for f in version.get('files', []) if f.get('type')=='Model' and (f.get('metadata') or {}).get('format')=='SafeTensor']
+                native = j['payload'].get('installer') == 'native'
+                files = [f for f in version.get('files', []) if f.get('type') in (('Model','Diffusion Model') if native else ('Model',)) and (f.get('metadata') or {}).get('format') in (('SafeTensor','GGUF') if native else ('SafeTensor',))]
                 chosen = [f for f in files if str(f.get('id'))==j.get('selected_file_id')] if j.get('selected_file_id') else files
                 if len(chosen)!=1:
                     return self.e.repo.update(j['id'], 'needs_input', {'reason':'file_selection',
@@ -144,6 +158,8 @@ class Acquisition:
                 sha256 = (resolved['hashes'].get('SHA256') or '').lower()
                 if not re.fullmatch(r'[a-f0-9]{64}', sha256):
                     raise Fault('SOURCE_HASH_REQUIRED', 'selected file needs a verified SHA256 before installation')
+                if j['payload'].get('installer')=='native':
+                    return self.native_install(j,f)
                 args = {'request_id':'acq-install:'+j['id'], 'url':'https://civitai.red/models/'+mid+'?modelVersionId='+vid, 'file_id':str(f['id']), 'expected_sha256':sha256}
                 operation = 'models.checkpoint.install' if model.get('type') == 'Checkpoint' else 'models.lora.install'
                 j = self.e.repo.update(j['id'], 'submitting', {'install_args':args, 'install_operation':operation}, event='acquisition.remote_intent')[0]
@@ -154,6 +170,56 @@ class Acquisition:
                 state = self.e.repo.get(j['id'])['state']
                 return self.e.repo.update(j['id'], 'ack_unknown' if state=='submitting' else 'onboarding' if state=='onboarding' else 'failed',
                     {'next_attempt':time.time()+15, 'error':{'code':getattr(exc,'code','ACQUISITION_ERROR'), 'message':'Acquisition interrupted; inspect retained job state.'}}, event='acquisition.interrupted')[0]
+
+    def native_install(self, j, selected):
+        """One durable source-file intent, one native HTTP install POST."""
+        from urllib.parse import urlencode, urlsplit
+        if not self.e.native_admin.enabled:
+            raise Fault('ADMIN_WRITES_DISABLED','native installation disabled')
+        url=self.e.onboarding.url(selected.get('downloadUrl'))
+        u=urlsplit(url);base=urlsplit(self.e.onboarding.base)
+        if (u.scheme,u.netloc)!=(base.scheme,base.netloc) or u.path!='/api/download/models/'+str(j['resolved']['version_id']):
+            raise Fault('SOURCE_URL','exact source version download endpoint required')
+        prepared={'source':url,'inplace':False,'config':{},'selected_file':j['resolved'],
+                  'native_scope':self.e.native_queue.scope()}
+        j=self.e.repo.update(j['id'],'submitting',{'native_install_intent':prepared},event='acquisition.native_install_intent')[0]
+        # A timeout/rejection after this boundary never authorizes a second POST.
+        raw=self.e.invoke.call('POST','/api/v2/models/install?'+urlencode({'source':url,'inplace':'false'}),{})
+        if not isinstance(raw,dict) or type(raw.get('id')) is not int:
+            raise Fault('REMOTE_SHAPE','native install ACK lacks exact ID')
+        j=self.e.repo.update(j['id'],'installing',{'native_install_id':raw['id'],'next_attempt':time.time()+1},event='acquisition.native_install_ack')[0]
+        return self.native_observe(j)
+
+    def native_observe(self, j):
+        """GET-only known-ID recovery. Never infer an ACK from a matching file."""
+        try:
+            if j.get('source_origin')!=self.e.onboarding.base:
+                raise Fault('SOURCE_BINDING_CHANGED','acquisition source changed')
+            if j.get('native_scope')!=self.e.native_queue.scope():
+                raise Fault('NATIVE_SCOPE_MISMATCH','original acquisition backend required')
+            nid=j.get('native_install_id')
+            if type(nid) is not int:
+                return self.e.repo.update(j['id'],'ack_unknown',{'next_attempt':time.time()+15,
+                    'message':'Native install ACK unknown; no automatic reinstall or inventory adoption.'})[0]
+            raw=self.e.invoke.call('GET','/api/v2/models/install/'+str(nid))
+            if not isinstance(raw,dict) or raw.get('id')!=nid:
+                raise Fault('REMOTE_SHAPE','native install identity differs')
+            status=raw.get('status')
+            observation={k:raw[k] for k in ('id','status','bytes','total_bytes') if k in raw}
+            self.e.repo.update(j['id'],changes={'native_install_observation':observation,'next_attempt':time.time()+2})
+            if status in ('error','cancelled'):
+                return self.e.repo.update(j['id'],'failed',{'error':{'code':'NATIVE_INSTALL_FAILED','message':'Native install failed/cancelled; original intent retained, no automatic retry.'}})[0]
+            if status!='completed':return self.e.repo.get(j['id'])
+            key=(raw.get('config_out') or {}).get('key')
+            matches=[m for m in self.matches(j['resolved']) if m.get('key')==key]
+            if len(matches)!=1:
+                return self.e.repo.update(j['id'],'partial',{'error':{'code':'REGISTRATION_UNVERIFIED',
+                    'message':'Completed install key is not a unique typed-hash match; no gallery publication.'}})[0]
+            return self.onboard(j,matches[0],j['resolved'])
+        except Exception as exc:
+            return self.e.repo.update(j['id'],changes={'next_attempt':time.time()+15,'error':{
+                'code':getattr(exc,'code','NATIVE_INSTALL_OBSERVATION_UNAVAILABLE'),
+                'message':'Known native install observation unavailable; no POST replay.'}})[0]
 
     def native_result(self, j, native):
         if native['state'] != 'succeeded':
@@ -188,6 +254,8 @@ class Acquisition:
         args = {k:resolved[k] for k in ('model_id','version_id','file_id','file_name')}
         args.update(request_id='acq-onboard:'+j['id'], registered_key=installed['key'], registered_path=installed['path'],
                     hash_algorithm=algorithm, file_hash=measured, gallery_limit=30, image_refresh='reuse')
+        if j['payload'].get('installer')=='native':
+            args.update(self.e.native_queue.scope())
         old = repo.request(j['owner_principal'], args['request_id'], 'onboarding', args)
         if old:
             progress = self.e.onboarding.call('models.onboard.get', {'job_id':old['id']}, j['owner_principal'], 'atlas-acquisition')

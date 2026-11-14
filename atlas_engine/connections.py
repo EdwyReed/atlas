@@ -25,12 +25,15 @@ def install(owner, config, manifest, clients):
         view.backend_generation = binding.backend_generation
         view.account_scope = binding.account_scope
         view.invoke = clients[binding.id]
-        view.allow_submit = binding.enable_writes
+        view.allow_submit = binding.enable_writes and (not owner.held_admission or owner.native_activated)
         for name in ('native_admin', 'native_queue', 'workspace', 'onboarding'):
             helper = copy(getattr(owner, name))
             helper.e = view
             setattr(view, name, helper)
-        view.native_admin.enabled = binding.enable_writes
+        view.native_admin.enabled = view.allow_submit
+        if owner.native_activated and owner.held_admission['admission'] != 'portable-restored-v1':
+            from .adoption_native import preflight
+            preflight(binding.model_dump(), view.invoke, owner.held_admission['native'])
         for name in ('uploads', 'artifacts'):
             helper = copy(getattr(owner, name))
             helper.invoke = view.invoke

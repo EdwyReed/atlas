@@ -38,6 +38,19 @@ class Invoke(JsonHTTP):
         if len(set(observed))!=len(observed) or set(observed)!=set(ids['item_ids']):
             raise Fault('QUEUE_INCOMPLETE','native inventory changed during hydration; retry next scan, never infer missing jobs as canceled')
         return out
+    def inventory_get(self,stop=None):
+        """GET-only hydration for configured-source adoption observation."""
+        ids=self.call('GET',self.qp+'/item_ids?order_dir=ASC')
+        values=ids.get('item_ids',[])
+        if len(values)!=ids.get('total_count') or len(set(values))!=len(values):
+            raise Fault('QUEUE_INCOMPLETE','native ID inventory incomplete')
+        out=[]
+        for n in values:
+            if stop is not None and stop.is_set():raise Fault('OBSERVER_STOPPING','observer stopping during GET hydration')
+            out.append(self.item(n))
+        if [i.get('item_id') for i in out]!=values:
+            raise Fault('QUEUE_INCOMPLETE','native item identity changed')
+        return out
     def submit(self,graph,jid):
         return self.call('POST',self.qp+'/enqueue_batch',{'batch':{'batch_id':jid,'graph':graph,'runs':1,'origin':'atlas-engine:'+jid},'prepend':False})
     def submit_prepared(self,body):

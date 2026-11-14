@@ -26,7 +26,7 @@ READS = {'capabilities', 'status', 'jobs.get', 'jobs.list', 'jobs.page', 'jobs.e
          'attachment.status', 'attachment.get', 'attachment.page',
          'generation.get', 'batch.get', 'dream.get', 'admin.get', 'artifact.read',
          'artifact.list', 'upload.get', 'mask.get', 'censor.get',
-         'corpus.get', 'corpus.page', 'corpus.history', 'corpus.import.get',
+         'corpus.get', 'corpus.page', 'corpus.history', 'corpus.import.get', 'corpus.files.read',
          'generation.records.get', 'generation.records.page', 'loras.get', 'loras.page'}
 EFFECTS = {'generation', 'batch', 'native_workspace', 'native_admin', 'mask', 'censor',
            'acquisition', 'acquisition_batch', 'onboarding'}
@@ -184,6 +184,8 @@ def sync_tree(root):
 def backup(source, destination):
     source, destination = new_target(source, destination)
     with offline(source):
+        if (source/'adoption-receipt.json').exists():
+            raise ValueError('adopted root has pinned external dependencies; ordinary backup unsupported until explicit reconciliation/repackaging')
         if (source/'legacy-attachment.json').exists():
             raise ValueError('partial legacy attachment has external dependencies; self-contained backup unsupported')
         # Inventory selected trees before touching destination. Excluded paths
@@ -296,6 +298,14 @@ def restore_state(root):
         raise ValueError('invalid or moved restore marker; restore through atlas-state')
     if state.get('preimage_verified') is False:
         raise ValueError('incomplete restore; restore backup to a new destination')
+    if state.get('migration_kind') == 'canonical-dev20-adoption-v1':
+        receipt = Path(root) / 'adoption-receipt.json'
+        if not receipt.is_file() or sha(receipt) != state.get('adoption_receipt_sha256'):
+            raise ValueError('canonical adoption receipt missing or changed')
+        adopted = json.loads(receipt.read_text())
+        from .adoption_control import current_versions
+        if current_versions(Path(root), state, adopted) != versions():
+            raise ValueError('canonical adoption requires its pinned target runtime')
     if state.get('migration_kind')=='legacy-attachment-partial-v1' and state.get('reconciled') is not False:
         raise ValueError('partial legacy mapping cannot be activated')
     return state
@@ -305,10 +315,15 @@ def storage_path(root, value):
     """Resolve only Engine-owned storage; do not rewrite journal/source identities."""
     root = Path(root); path = Path(value)
     state = restore_state(root)
-    if state:
-        for old in state['storage_source_roots']:
+    # A relocated root may be nested beneath an ancestor source spelling
+    # (e.g. /var/lib/atlas -> /var/lib/atlas/restored). New artifacts already
+    # belong to the destination; remapping them would duplicate that suffix.
+    if state and not any(path.is_relative_to(root / n) for n in ('artifacts', 'media')):
+        for old in sorted(state['storage_source_roots'], key=lambda p: len(Path(p).parts), reverse=True):
             try: relative = path.relative_to(old)
             except ValueError: continue
+            if not relative.parts or relative.parts[0] not in ('artifacts', 'media'):
+                continue
             path = root / relative; break
     path = safe_path(path)
     if not any(path.is_relative_to(root / n) for n in ('artifacts', 'media')):

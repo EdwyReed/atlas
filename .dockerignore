@@ -3,6 +3,12 @@
 !pyproject.toml
 !README.md
 !requirements-cpu.lock
+!requirements-semantic.lock
+!requirements-media.lock
+!requirements-media-onnx.lock
+!container/
+!container/Dockerfile.media
+!container/init-media.py
 !requirements-build.lock
 !atlas_engine/
 !atlas_engine/*.py

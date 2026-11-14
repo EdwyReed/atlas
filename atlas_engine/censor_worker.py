@@ -13,6 +13,12 @@ def main():
     if ctypes.CDLL(None,use_errno=True).prctl(1,signal.SIGKILL,0,0,0)!=0:
         raise RuntimeError('cannot bind worker lifetime to Engine')
     if os.getppid()!=spec['parent_pid']:raise RuntimeError('Engine owner already stopped')
+    # This inference process requires neither network nor child installers.
+    # Third-party import helpers must fail closed, never auto-install/download.
+    def offline(event, args):
+        if event in ('socket.connect', 'subprocess.Popen', 'os.system', 'os.posix_spawn'):
+            raise PermissionError('offline CPU worker forbids network and child installers')
+    sys.addaudithook(offline)
     for k in ('OMP_NUM_THREADS','MKL_NUM_THREADS','OPENBLAS_NUM_THREADS','NUMEXPR_NUM_THREADS'):
         os.environ[k]='2'
     os.environ.update(CUDA_VISIBLE_DEVICES='',HF_HUB_OFFLINE='1',YOLO_OFFLINE='true')

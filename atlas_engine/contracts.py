@@ -80,13 +80,14 @@ class Resolve(Strict):
 class Plan(Resolve):
     project: str | None = Field(default=None,min_length=1,max_length=128)
     prompt: str = Field(default='',max_length=10000)
-    mode: Literal['txt2img','inpaint','upscale'] = 'txt2img'
+    mode: Literal['txt2img','inpaint','upscale','refinement'] = 'txt2img'
     board_id: str | None = Field(default=None,min_length=1,max_length=200)
     image_name: str | None = Field(default=None,min_length=1,max_length=200)
     mask_name: str | None = Field(default=None,min_length=1,max_length=200)
     strength: float = Field(default=0.75,gt=0,le=1)
     scale: float = Field(default=2.0,ge=1,le=4)
     upscale_engine: Literal['spandrel','esrgan'] = 'spandrel'
+    output_upscaler: str | None = Field(default=None,min_length=1,max_length=200)
     negative_prompt: str = Field(default='',max_length=10000)
     width: int = Field(default=512,ge=64,le=1536,multiple_of=8)
     height: int = Field(default=512,ge=64,le=1536,multiple_of=8)

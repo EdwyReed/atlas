@@ -21,7 +21,10 @@ class Media:
         while not self.engine.stop.is_set():
             try:
                 with self.lock:
-                    for job in self.repo.page('censor',{'queued'},limit=1):
+                    rows=self.repo.page('censor',{'queued'},after=getattr(self,'cursor',''),limit=16)
+                    self.cursor=rows[-1]['id'] if rows else ''
+                    for job in rows:
+                        if self.engine.historical_native(job):continue
                         if self.engine.stop.is_set():break
                         with (self.root/'dispatch.lock').open('a') as lock:
                             fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
@@ -40,6 +43,7 @@ class Media:
     def recover(self):
         for kind in ('censor','mask'):
             for job in self.repo.iter_jobs(kind,{'queued','running'}):
+                if self.engine.historical_native(job):continue
                 self.repo.update(job['id'],'failed',{'error':{'code':'INTERRUPTED','message':'Engine stopped during media request; no automatic replay; partial artifacts retained'}},event='media.interrupted')
     def enabled(self,kind):
         config=self.config.get(kind)

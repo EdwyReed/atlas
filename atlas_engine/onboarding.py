@@ -149,9 +149,12 @@ def numeric(record):
 
 
 class Onboarding:
-    def __init__(self, engine, source_url='https://civitai.red'):
+    def __init__(self, engine, source_url='https://civitai.red', token=''):
         self.e = engine
         self.base = source_url.rstrip('/')
+        if not isinstance(token,str) or any(ord(c)<33 or ord(c)>126 for c in token):
+            raise ValueError('invalid source credential')
+        self.token=token
         u = urlsplit(self.base)
         self.fixture = u.scheme == 'http' and u.hostname in ('127.0.0.1', 'localhost')
         if self.base != 'https://civitai.red' and not self.fixture:
@@ -237,6 +240,8 @@ class Onboarding:
             if remaining <= 0:
                 raise Fault('SOURCE_LIMIT', 'source request exceeds time budget')
             outgoing = {'User-Agent': 'AtlasEngine/0.3 metadata verification', 'Accept-Encoding': 'identity'}
+            if self.token and not image:
+                outgoing['Authorization']='Bearer '+self.token
             if current == validator_url:
                 outgoing.update({k: v for k, v in headers.items() if k.startswith('If-')})
             # A fresh client per hop discards Set-Cookie, even on same-host hops.
@@ -306,12 +311,16 @@ class Onboarding:
         raise Fault('SOURCE_REDIRECT', 'image redirect hop bound exceeded')
 
     def json(self, url):
-        if not self.fixture:
+        # Retain the explicitly bound legacy SSH transport; standalone defaults
+        # to credential-free local HTTP, never an implicit Windows dependency.
+        if not self.fixture and (self.e.native_admin.policy or {}).get('windows_lora_installer') is not None:
             from .civitai_readonly import fetch
             return fetch(self.e.native_admin.policy, self.url(url))
         raw, _, _ = self.request(self.url(url), headers={'Accept-Encoding': 'identity'})
         if not isinstance(raw, bytes):
             raise Fault('SOURCE_SHAPE', 'unexpected metadata body')
+        if self.token and self.token.encode() in raw:
+            raise Fault('SOURCE_REDACTED', 'source echoed credential; response discarded')
         try:
             value = json.loads(raw)
         except (ValueError, TypeError):

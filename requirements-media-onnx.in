@@ -1,0 +1,2 @@
+# imgutils imports its ONNX helpers even when Atlas uses only its renderer.
+onnxruntime==1.32.0

@@ -74,7 +74,7 @@ def attach_metadata(
     nodes["meta"] = meta
     edges.append(edge("meta", "metadata", "l2i", "metadata"))
 
-def wire_inpaint(nodes, edges, *, init_name: str, mask_name: str, i2l_type: str, strength: float, tiled: bool) -> None:
+def wire_inpaint(nodes, edges, *, init_name: str, mask_name: str | None, i2l_type: str, strength: float, tiled: bool) -> None:
     """Wire img2latent + native denoise mask. Public white=edit masks are
     explicitly inverted by upload.import before this graph uses their native ID.
     GPU polarity/visual correctness still requires separate acceptance.
@@ -90,13 +90,7 @@ def wire_inpaint(nodes, edges, *, init_name: str, mask_name: str, i2l_type: str,
         "is_intermediate": True,
         "use_cache": True,
     }
-    nodes["mask"] = {
-        "id": "mask",
-        "type": "image",
-        "image": {"image_name": mask_name},
-        "is_intermediate": True,
-        "use_cache": True,
-    }
+
     nodes["i2l"] = {
         "id": "i2l",
         "type": i2l_type,
@@ -112,6 +106,11 @@ def wire_inpaint(nodes, edges, *, init_name: str, mask_name: str, i2l_type: str,
         edge("loader", "vae", "i2l", "vae"),
         edge("i2l", "latents", "denoise", "latents"),
     ]
+    # Full-image refinement must not fabricate a mask or become txt2img.
+    if mask_name is None:
+        return
+    nodes["mask"] = {"id":"mask", "type":"image", "image":{"image_name":mask_name},
+                     "is_intermediate":True, "use_cache":True}
     if i2l_type == "anima_i2l":
         # No VAE on mask node — Anima VAE is not accepted by create_denoise_mask.
         nodes["inpaint_mask"] = {
@@ -228,7 +227,7 @@ def sd1_graph(model, prompt, negative, *, width, height, steps, cfg, seed, sched
         edge("loader", "vae", "l2i", "vae"),
         edge("denoise", "latents", "l2i", "latents"),
     ]
-    if init_name and mask_name:
+    if init_name:
         wire_inpaint(
             nodes,
             edges,
@@ -241,7 +240,7 @@ def sd1_graph(model, prompt, negative, *, width, height, steps, cfg, seed, sched
     attach_metadata(
         nodes,
         edges,
-        generation_mode="inpaint" if (init_name and mask_name) else "txt2img",
+        generation_mode="inpaint" if (init_name and mask_name) else "img2img" if init_name else "txt2img",
         prompt=prompt,
         negative=negative,
         width=width,
@@ -253,7 +252,7 @@ def sd1_graph(model, prompt, negative, *, width, height, steps, cfg, seed, sched
         model=model,
         loras=loras,
         clip_skip=clip_skip,
-        strength=strength if (init_name and mask_name) else None,
+        strength=strength if init_name else None,
         init_image=init_name,
     )
     return {"id": str(uuid.uuid4()), "nodes": nodes, "edges": edges}
@@ -336,7 +335,7 @@ def anima_graph(model, vae, encoder, prompt, negative, *, width, height, steps, 
         edge("loader", "vae", "l2i", "vae"),
         edge("denoise", "latents", "l2i", "latents"),
     ]
-    if init_name and mask_name:
+    if init_name:
         wire_inpaint(
             nodes,
             edges,
@@ -349,7 +348,7 @@ def anima_graph(model, vae, encoder, prompt, negative, *, width, height, steps, 
     attach_metadata(
         nodes,
         edges,
-        generation_mode="anima_inpaint" if (init_name and mask_name) else "anima_txt2img",
+        generation_mode="anima_inpaint" if (init_name and mask_name) else "anima_img2img" if init_name else "anima_txt2img",
         prompt=prompt,
         negative=negative,
         width=width,
@@ -362,7 +361,7 @@ def anima_graph(model, vae, encoder, prompt, negative, *, width, height, steps, 
         loras=loras,
         vae=vae,
         qwen3=encoder,
-        strength=strength if (init_name and mask_name) else None,
+        strength=strength if init_name else None,
         init_image=init_name,
     )
     return {"id": str(uuid.uuid4()), "nodes": nodes, "edges": edges}
@@ -410,3 +409,14 @@ def upscale_graph(*, image_name: str, engine: str, spandrel_model, esrgan_name: 
     apply_board(nodes["up"], board_id)
     edges.append(edge("init", "image", "up", "image"))
     return {"id": str(uuid.uuid4()), "nodes": nodes, "edges": edges}
+
+
+def append_output_upscale(graph, model, scale):
+    """Concrete diffusion->learned pixels recipe, not a workflow compiler."""
+    node={'id':'output_upscale','type':'spandrel_image_to_image_autoscale',
+          'image_to_image_model':ident(model),'tile_size':512,'scale':float(scale),
+          'fit_to_multiple_of_8':True,'is_intermediate':False,'use_cache':False}
+    decoded='l2i' if 'l2i' in graph['nodes'] else 'out'
+    graph['nodes'][decoded]['is_intermediate']=True
+    graph['nodes']['output_upscale']=node
+    graph['edges'].append(edge(decoded,'image','output_upscale','image'))

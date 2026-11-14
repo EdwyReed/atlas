@@ -1,6 +1,61 @@
-# CPU container (development slice)
+# Atlas container delivery
 
-Latest accepted image: `atlas-core:cpu-dev12`, immutable ID `sha256:8596598c4b173517b468a0c0430f8f2f5a0b06ba8d69078490980e1db61f3518`, from commit `6bce0918a344347f3505ffaaa32c248077c82892`. Package dev12 passed isolated core HTTP/MCP/CLI/auth/ownership/restart and populated same-format offline backup/restore with installed `atlas-state`; source/wheel/host/image module parity held. Private repeat commands and receipts: `atlas-studio/planning/implementation/container-dev12/`. The current unpublished source candidate dev14 is newer and has NOT been built/run in Docker. Its installed-host native IMAGE workflow acceptance does not certify this image. Native InvokeAI/media execution inside the image and live deployment remain unaccepted. References to dev10 below describe earlier evidence, not the latest image.
+Current development package: dev18, not full-product completion. Core HTTP/MCP/CLI/auth/nonroot/read-only-rootfs/ownership/restart and retained recovery-data restore into an independent container have been exercised. Optional CPU media image `atlas-core:media-dev18-r6`, immutable ID `sha256:a991fdbf534164294f3ccc61046a0b66fb2dcc9d3950ff190942dbcd06d7e29a`, passed actual MobileSAM + NTD11 CPU inference/artifact/restart checks on synthetic geometry. It predates the newest source-credential wiring; do not assume that tag equals later source. Media inference/detection quality, actual model install/GPU execution and fresh live-state migration are separate acceptance boundaries. Historical dev12/dev10 instructions below retain their original evidence only.
+
+## Optional private CPU media image
+
+The main Dockerfile includes hash-pinned BGE/ONNX CPU dependencies. Semantic weights are separately provisioned under the state volume's `cache/fastembed`; no startup download occurs. The media image uses a separate pinned Python environment because the retained imgutils renderer requires NumPy1 while core semantic uses NumPy2. The CPU censor child denies sockets and subprocess installers, including import-time dependency fallback.
+
+Prepare a NEW private kit OUTSIDE the repository. Inputs must be explicit operator-owned source and weight paths; the helper copies only selected Python/notices and model files, never a venv, credentials or runtime socket. Do not publish third-party source/weights without checking redistribution rights.
+
+```sh
+python3 container/media-kit.py --mask-root "$MASK_ROOT" --sam-source "$SAM_SOURCE" \
+  --sam-weights "$SAM_WEIGHTS" --censor-source "$CENSOR_SOURCE" \
+  --censor-weights "$CENSOR_WEIGHTS" --out "$PRIVATE_KIT"
+docker build -t atlas-core:standalone-dev18 .
+docker build -f container/Dockerfile.media \
+  --build-arg ATLAS_IMAGE=atlas-core:standalone-dev18 \
+  --build-context media_sources="$PRIVATE_KIT/sources" -t atlas-core:media-local .
+```
+
+Use the ordinary run's NEW owned state/config volumes, but initialize models BEFORE starting the daemon. The configuration must explicitly contain `media_config_file:"/run/atlas/media.json"`; provision does not edit atlas.json. Initializer refuses an existing media kit/config and copies/verifies weights once. Only that one-shot helper receives the input mount; the running daemon receives its two volumes, not host source/env/model directories.
+
+```sh
+docker run --rm --network none --user 0:0 \
+  -v "$NAME-state:/var/lib/atlas" -v "$NAME-config:/run/atlas" \
+  -v "$PRIVATE_KIT/weights:/inputs:ro" --entrypoint python \
+  atlas-core:media-local /opt/atlas-media/init.py
+# Start with the ordinary bridge command below, media-local image, 3g/2CPU/256pids.
+```
+
+Repeat `verification/media_docker.py --image atlas-core:media-local --weights "$PRIVATE_KIT/weights" --out NEW_PRIVATE_EVIDENCE` with the matching installed host wheel. The runner exercises uploads, mask candidates, selected-logit refinement, real censor, artifact hashes, source-free daemon mounts and exact restart receipts, then removes its owned resources. Explicit selected-region geometry is checked, not general detector quality.
+
+`container/Dockerfile.refresh` supports a package-only update of an already pinned local image using a named `atlas_release` context containing exactly the built wheel. Use the main Dockerfiles instead when dependencies change. Verify complete module parity before claiming the resulting image matches source. Disk-constrained work should not repeatedly rebuild/retain giant dependency layers.
+
+### Portable media recovery
+
+Stop the owned daemon before packing (both existing storage locks are required). Explicitly select the private weights to include; configuration, secrets and environments are never collected. This is an operator action, not an automatic restart replay:
+
+```sh
+atlas-portable pack SOURCE PRIVATE_ARCHIVE --media-weights PRIVATE_WEIGHTS
+atlas-portable unpack PRIVATE_ARCHIVE NEW_ROOT
+# Prepare and apply the destination/ledger-bound activation report as documented
+# by atlas-portable activate --help; retain all historical effects inert.
+atlas-portable activate NEW_ROOT PRIVATE_REPORT
+```
+
+Inside the matching private media image, mount ONLY the restored state volume and a NEW config volume. After generating ordinary atlas.json/clients.json, set `root` to the exact restored root and `media_config_file` to `/run/atlas/media.json`. Run the one-shot initializer with network disabled:
+
+```sh
+docker run --rm --network none --user 0:0 \
+  -v "$RESTORED_STATE:/var/lib/atlas" -v "$NEW_CONFIG:/run/atlas" \
+  --entrypoint python atlas-core:media-local /opt/atlas-media/init.py \
+  --restored --state-root /var/lib/atlas/NEW_ROOT
+```
+
+No `/inputs` or original source/model mount is used for restored provisioning. Both archived model hashes and the completed restore binding are checked under the existing offline locks. An existing kit/config refuses rather than overwriting; interrupted provisioning remains visibly incomplete. Start the nonroot daemon with its ordinary two volumes. Completed historical effects remain inert after explicit activation; fresh mask setup/admission is required for new inference. Repacking retains archived weights, not transient model runtimes. The image still supplies the explicit private source/dependency layer; transferring weights alone does not license or install third-party source.
+
+`verification/media_docker.py --portable` exercised populated pack -> new volume/root -> explicit activation/provision -> exact old receipts/artifacts -> fresh real MobileSAM inference -> restart. The source-free successor has only its own state/config mounts. Synthetic geometry is not general detector-quality acceptance. A nested-root regression additionally protects new artifact paths from being remapped as historical ones.
 
 Build from the repository root. No private build paths, Hermes, InvokeAI, vocabulary,
 models or weights are needed. Linux amd64 / Python 3.11 is exercised; other platforms

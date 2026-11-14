@@ -85,6 +85,7 @@ class Workspace:
 
     def recover(self):
         for job in self.e.repo.iter_jobs('native_workspace', {'queued', 'submitting', 'ack_unknown'}):
+            if self.e.historical_native(job):continue
             # Never dispatch a prepared request on startup, even if it was not sent.
             state = 'failed' if job['state'] == 'queued' else 'ack_unknown'
             job = self.e.repo.update(job['id'], state, event='workspace.restart_no_replay')[0]

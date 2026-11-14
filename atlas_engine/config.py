@@ -42,12 +42,16 @@ class Config(BaseModel):
     reference_url: str | None = None
     reference_token_file: Path | None = None
     reference_mirror: Path | None = None
+    checkpoint_attachment: Path | None = None
     reference_delta: Path | None = None
     reference_collections: list[str] | None = None
     projection_dir: Path | None = None
     policy_file: Path | None = None
     civitai_url: str = 'https://civitai.red'
+    civitai_token_file: Path | None = None
     media_config_file: Path | None = None
+    public_anonymous_compatibility: bool = False
+    public_assets_dir: Path | None = None
 
     @classmethod
     def load(cls, path, **overrides):
@@ -61,8 +65,8 @@ class Config(BaseModel):
                 raise ValueError('container_endpoint requires 0.0.0.0 bind and exact http://127.0.0.1:PORT endpoint')
         elif not ipaddress.ip_address(config.host).is_loopback:
             raise ValueError('this release requires a loopback IP bind or explicit container_endpoint')
-        for name in ('root', 'clients_file', 'vocabulary', 'reference_token_file', 'media_config_file',
-                     'reference_mirror', 'reference_delta', 'projection_dir', 'policy_file'):
+        for name in ('root', 'clients_file', 'vocabulary', 'reference_token_file', 'civitai_token_file', 'media_config_file', 'public_assets_dir',
+                     'reference_mirror', 'reference_delta', 'checkpoint_attachment', 'projection_dir', 'policy_file'):
             value = getattr(config, name)
             if value is not None:
                 setattr(config, name, (path.parent / value).resolve())
@@ -75,6 +79,8 @@ class Config(BaseModel):
             validate_url(config.reference_url)
         if config.reference_mirror and config.reference_url:
             raise ValueError('choose reference mirror or URL')
+        if config.checkpoint_attachment and any((config.reference_mirror, config.reference_delta, config.reference_url, config.reference_collections)):
+            raise ValueError('checkpoint_attachment replaces other reference bindings')
         if config.reference_delta and not config.reference_mirror:
             raise ValueError('reference_delta requires reference_mirror')
         if config.reference_collections is not None and not config.reference_url:
@@ -141,6 +147,19 @@ def bind_connections(root, connections, migrate=False):
                    'legacy_connection_id': legacy['id'] if legacy else None,
                    'legacy_binding': legacy, 'migration': 'explicit-preserve-v1' if legacy_path.exists() else 'new-root',
                    'additions': []}
+        adopted = root / 'adoption-receipt.json'
+        if adopted.exists():
+            from .state_backup import restore_state
+            restore_state(root)
+            original = json.loads(adopted.read_text())['plan']['native_binding']
+            if original:
+                original = {k:v for k,v in original.items() if k != 'enable_writes'}
+                if bindings.get(original['id']) != original:
+                    raise ValueError('adopted native binding must remain exact')
+                receipt.update(legacy_connection_id=original['id'],
+                               legacy_binding=original, migration='explicit-dev20-adoption')
+            elif bindings:
+                raise ValueError('adopted unscoped history has no reviewed native binding')
     # Embedded corpus owners do not take service.lock. Refuse publication while
     # they own this root too; no binding/receipt may change behind their back.
     import fcntl

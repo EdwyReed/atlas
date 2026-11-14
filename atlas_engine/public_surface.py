@@ -13,8 +13,9 @@ from starlette.staticfiles import StaticFiles
 ROOT = Path(__file__).resolve().parent / 'public_assets'
 
 
-def attach(original, engine):
+def attach(original, engine, assets_dir=None):
     from .server import engine_call
+    assets = Path(assets_dir) if assets_dir is not None else ROOT
 
     async def invoke(request, op, args):
         identity = request.scope['atlas_identity']
@@ -72,7 +73,7 @@ def attach(original, engine):
         return await asyncio.to_thread(thumbnail)
 
     async def index(request):
-        return FileResponse(ROOT/'index.html', headers={'Cache-Control':'no-cache'})
+        return FileResponse(assets/'index.html', headers={'Cache-Control':'no-cache'})
 
     async def root(request):
         return RedirectResponse('/atlas/')
@@ -81,7 +82,7 @@ def attach(original, engine):
         Route('/', root), Route('/atlas', index), Route('/atlas/', index),
         Route('/atlas/api/operation', operation, methods=['POST']),
         Route('/atlas/api/media/{sha}', media),
-        Mount('/atlas/assets', app=StaticFiles(directory=ROOT)),
+        Mount('/atlas/assets', app=StaticFiles(directory=assets)),
     ])
 
     class Surface:
