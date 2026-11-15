@@ -347,6 +347,7 @@ def validate_admission(root,state,report):
     if (report.get('admission')!=ADMISSION or report.get('runtime')!=sb.versions()
             or report.get('target_root')!=str(root)
             or report.get('backup_manifest_sha256')!=state['backup_manifest_sha256']
+            or report.get('refresh')!=state.get('refresh')
             or report.get('portable_metadata_sha256')!=sb.sha(Path(root)/'portable-state.json')):
         raise ValueError('portable admission binding/runtime differs')
     if row_pins(root,[r['id'] for r in report['held_rows']])!=report['held_rows']:
@@ -366,10 +367,13 @@ def activate(root, report_path):
         if (report.get('target_root')!=str(root) or not report.get('operator')
                 or report.get('registry_logical_sha256')!=sb.registry_digest(root)
                 or report.get('backup_manifest_sha256')!=state['backup_manifest_sha256']
+                or report.get('refresh')!=state.get('refresh')
                 or report.get('runtime')!=sb.versions()
                 or report.get('retain_historical_effects') is not True
                 or not isinstance(report.get('assessment'),str) or not report['assessment'].strip()):
             raise ValueError('activation must bind target/ledger/runtime/backup/operator and retain historical effects')
+        from .portable_refresh import validate_final
+        validate_final(root,state)
         References(root).validate()
         with closing(ad.connection(root/'registry.sqlite3',closed=True)) as db:
             rows=db.execute('select id,kind,state from jobs order by id').fetchall()

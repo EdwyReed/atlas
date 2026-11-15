@@ -266,7 +266,7 @@ def payload_files(root):
 
 
 def registry_snapshot(root, dest):
-    with closing(ad.connection(root/'registry.sqlite3')) as source, closing(sqlite3.connect(dest)) as target:
+    with closing(ad.connection(root/'registry.sqlite3', closed=True)) as source, closing(sqlite3.connect(dest)) as target:
         source.execute('BEGIN')
         source.backup(target)
         target.execute('pragma journal_mode=DELETE')
@@ -327,14 +327,20 @@ def refresh(root, plan_path, plan_sha256, after_apply=None):
     if source == root or source in root.parents or root in source.parents:
         raise ValueError('overlapping refresh roots')
     with sb.offline(source), sb.offline(root):
-        if ad.runtime(plan['source_python']) != plan['source_versions']:
-            raise ValueError('source runtime drift')
-        ad.check_pins(plan['external_dependencies'])
+        from . import portable_refresh as pr
+        portable_cut = plan.get('format') == pr.FORMAT
+        if portable_cut:
+            pr.validate_source(source, root, plan)
+        else:
+            if ad.runtime(plan['source_python']) != plan['source_versions']:
+                raise ValueError('source runtime drift')
+            ad.check_pins(plan['external_dependencies'])
         state = read(root/sb.MARKER)
         stage = root/CONTROL/('refresh-'+plan_sha256)
         pending = stage/'pending.json'
         if not pending.exists():
-            if state != plan['state'] or sb.sha(root/'adoption-receipt.json') != plan['capture_receipt_sha256']:
+            receipt_sha = sb.sha(root/'adoption-receipt.json') if (root/'adoption-receipt.json').exists() else None
+            if state != plan['state'] or receipt_sha != plan['capture_receipt_sha256']:
                 raise ValueError('target marker/receipt drift')
             with closing(ad.connection(root/'registry.sqlite3')) as db:
                 if ad.ledger(db) != plan['target_registry']:
@@ -348,6 +354,7 @@ def refresh(root, plan_path, plan_sha256, after_apply=None):
                     raise ValueError('source schema drift')
             stage.mkdir(parents=True, mode=0o700)
             registry = registry_snapshot(source, stage/'registry.sqlite3')
+            portable_holds = pr.review(root, stage/'registry.sqlite3') if portable_cut else None
             # The final source ledger is authoritative, including progressed held
             # rows, events and result links. Preserve old receipts OUTSIDE jobs.
             preserved_holds=state.get('held_admission') or state.get('preserved_holds')
@@ -360,7 +367,11 @@ def refresh(root, plan_path, plan_sha256, after_apply=None):
                 held_review=review_progress(root/'registry.sqlite3',stage/'registry.sqlite3',holds['held_rows'])
             changes = {k:v for k,v in desired.items() if plan['target_files'].get(k) != v}
             removed = sorted(set(plan['target_files'])-set(desired))
-            need = sum(v['bytes'] for v in changes.values())+(stage/'registry.sqlite3').stat().st_size
+            if portable_cut and any(k.startswith(('artifacts/', 'media/')) for k in removed):
+                raise ValueError('historical owned files missing from current source')
+            need = (2*sum(v['bytes'] for v in changes.values())
+                    + max([v['bytes'] for v in changes.values()] + [0])
+                    + (stage/'registry.sqlite3').stat().st_size)
             if shutil.disk_usage(root).free < need+128*1024**2:
                 raise ValueError('insufficient delta staging space')
             for rel in changes:
@@ -375,6 +386,10 @@ def refresh(root, plan_path, plan_sha256, after_apply=None):
                           'target_root': str(root), 'source_inventory': before,
                           'registry': registry, 'files': desired, 'changes': changes,
                           'preserved_holds':preserved_holds,'held_review':held_review,
+                          'portable_held_rows':portable_holds,
+                          'capacity':{'additional_budget_after_registry':need,
+                                      'reserve':128*1024**2,
+                                      'free_after_registry':shutil.disk_usage(root).free},
                           'removed': removed, 'runtime': sb.versions(),
                           'registry_file_sha256': sb.sha(stage/'registry.sqlite3')}
             sb.sync_tree(stage)
@@ -435,10 +450,15 @@ def refresh(root, plan_path, plan_sha256, after_apply=None):
                 raise ValueError('refreshed whole ledger differs')
         if ad.source_inventory(source) != transition['source_inventory']:
             raise ValueError('source changed across refresh')
-        ad.check_pins(plan['external_dependencies'])
+        if portable_cut:
+            pr.validate_source(source, root, plan)
+        else:
+            ad.check_pins(plan['external_dependencies'])
         sb.sync_tree(root)
         state.pop('refresh_pending', None)
         state.update(preimage_verified=True, refresh=record(root, 'refresh-cut', transition))
+        if portable_cut:
+            state = pr.seal(root, state, transition)
         if transition.get('preserved_holds'):state['preserved_holds']=transition['preserved_holds']
         atomic(root/sb.MARKER, state)
         return {'refreshed': True, 'quarantined': True, 'changed_files': len(transition['changes']),

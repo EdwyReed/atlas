@@ -1,0 +1,8 @@
+# Source-only successor of an immutable accepted dev19 SSH core/media image.
+# No dependency, SSH-helper or media-helper changes. No runtime data in context.
+ARG ATLAS_IMAGE
+FROM ${ATLAS_IMAGE}
+USER 0:0
+COPY --from=atlas_release / /opt/atlas/ssh-release/
+RUN pip install --no-index --no-cache-dir --no-deps --force-reinstall /opt/atlas/ssh-release/*.whl
+USER 10001:10001
