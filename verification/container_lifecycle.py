@@ -78,7 +78,7 @@ class Container:
         assert inspected['HostConfig']['PortBindings']['12088/tcp'] == [{'HostIp': '127.0.0.1', 'HostPort': str(self.port)}]
         assert inspected['HostConfig']['ReadonlyRootfs']
         assert inspected['HostConfig']['CapDrop'] == ['ALL']
-        assert 'no-new-privileges' in inspected['HostConfig']['SecurityOpt']
+        assert any(x in ('no-new-privileges','no-new-privileges:true') for x in inspected['HostConfig']['SecurityOpt'])
         ownership = json.loads(self.exec(['python', '-I', '-c',
             'import os,json;print(json.dumps({p:[os.stat(p).st_uid,os.stat(p).st_gid] '
             'for p in '+repr(['/var/lib/atlas',state_root+'/corpus','/run/atlas'])+'}))']).stdout)

@@ -15,6 +15,18 @@ class Engine:
         self.restore_quarantined=bool(state and not state['reconciled'])
         from .adoption_control import held_state
         self.held_admission=held_state(root,state)
+        if state and state.get('portable_restore') and state.get('reconciled'):
+            # Durable boundary BEFORE any Repository, corpus or worker writes.
+            # A stopped runtime is not a never-admitted runtime, even if idle.
+            from pathlib import Path
+            from .adoption_control import atomic
+            from .portable_recovery import WITNESS
+            witness=Path(root)/WITNESS
+            if (Path(root)/'media-kit'/'incomplete').exists():
+                raise ValueError('incomplete media provisioning; explicit reviewed recovery required')
+            if not witness.exists():
+                atomic(witness,{'format':'atlas-portable-runtime-admitted-v1',
+                    'admission':state.get('held_admission'),'refresh':state.get('refresh')})
         self.adopted_reference_readable=False
         if state and state.get('portable_restore'):
             import json

@@ -40,7 +40,9 @@ print(json.dumps(dict(helpers={p:hashlib.sha256(Path(p).read_bytes()).hexdigest(
         def probe(image,code):return json.loads(run(['docker','run','--rm','--network','none','--read-only','--cap-drop','ALL','--security-opt','no-new-privileges','--tmpfs','/var/lib/atlas:rw,noexec,nosuid,size=1m','--entrypoint','python',image,'-I','-B','-c',code]))
         package=probe(image,PROBE);extras=probe(image,helper_probe);old=probe(bases[kind],helper_probe)
         assert package['files']==expected and package['version']=='0.4.0.dev19'
-        assert extras['helpers']==old['helpers']
+        # Reviewed helper fix is the only intentional helper delta.
+        assert {k:v for k,v in extras['helpers'].items() if k!='/opt/atlas-media/init.py'} == {k:v for k,v in old['helpers'].items() if k!='/opt/atlas-media/init.py'}
+        assert extras['helpers']['/opt/atlas-media/init.py']==sha((a.source/'container/init-media.py').read_bytes())
         assert extras['helpers']['/opt/atlas/ssh-agent.py']==sha((a.source/'container/ssh-agent.py').read_bytes())
         if kind=='media':assert extras['helpers']['/opt/atlas-media/init.py']==sha((a.source/'container/init-media.py').read_bytes())
         assert extras['wheels']=={wheel.name:build['sha256']}

@@ -27,8 +27,16 @@ def main():
     p=argparse.ArgumentParser(description=__doc__);p.add_argument('--out',type=Path,required=True)
     p.add_argument('--image',required=True);p.add_argument('--weights',type=Path,required=True)
     p.add_argument('--portable',action='store_true',help='pack populated media root, restore to a different root/volume and explicitly provision from archived weights')
+    p.add_argument('--production-envelope',action='store_true')
+    p.add_argument('--old-helper',type=Path)
     a=p.parse_args();out=a.out.absolute();out.mkdir(parents=True,exist_ok=False,mode=0o700)
-    sys.path.insert(0,str(Path(__file__).absolute().parent));from container_lifecycle import Container
+    sys.path.insert(0,str(Path(__file__).absolute().parent))
+    if a.production_envelope:
+        assert a.old_helper and not a.portable
+        from media_production_envelope import Container
+        Container.old_helper=a.old_helper
+    else:
+        from container_lifecycle import Container
     modules={p.name:sha(p.read_bytes()) for p in Path(atlas_engine.__file__).parent.glob('*.py')}
     with socket.socket() as s:s.bind(('127.0.0.1',0));port=s.getsockname()[1]
     endpoint=f'http://127.0.0.1:{port}';token=secrets.token_urlsafe(32);headers={'Authorization':'Bearer '+token}
@@ -65,12 +73,15 @@ def main():
             data[row['image_name']]=raw;(folder/row['image_name']).write_bytes(raw)
         return data
     try:
-        c.configure({'root':'/var/lib/atlas','clients_file':'/run/atlas/clients.json','host':'0.0.0.0','port':12088,
+        c.configure({'root':'/var/lib/atlas/state' if a.production_envelope else '/var/lib/atlas','clients_file':'/run/atlas/clients.json','host':'0.0.0.0','port':12088,
                      'container_endpoint':endpoint,'media_config_file':'/run/atlas/media.json'})
-        provision=c.run('run','--rm','--network','none','--user','0:0',
-            '-v',c.state+':/var/lib/atlas','-v',c.secrets+':/run/atlas',
-            '-v',str(a.weights.absolute())+':/inputs:ro','--entrypoint','python',a.image,'/opt/atlas-media/init.py')
-        (out/'provision.json').write_text(provision.stdout)
+        if a.production_envelope:
+            c.provision(a.weights)
+        else:
+            provision=c.run('run','--rm','--network','none','--user','0:0',
+                '-v',c.state+':/var/lib/atlas','-v',c.secrets+':/run/atlas',
+                '-v',str(a.weights.absolute())+':/inputs:ro','--entrypoint','python',a.image,'/opt/atlas-media/init.py')
+            (out/'provision.json').write_text(provision.stdout)
         ready()
         image=Image.new('RGB',(320,240),'#dbe9f2');draw=ImageDraw.Draw(image)
         draw.rectangle((70,50,235,195),fill='#cb3546',outline='#521725',width=5);draw.ellipse((90,68,115,93),fill='#ffcf62')
@@ -98,7 +109,18 @@ def main():
         assert censor['state']=='succeeded',censor
         assert censor['result']['device']=='cpu' and censor['result']['inference_images']==1
         censored=artifacts(censor);assert censored['safe.png']==raw
+        def client_history():
+            from atlas_engine.client import call
+            tokenfile=out/'client-token';tokenfile.write_text(token);tokenfile.chmod(0o600)
+            config={'endpoint':endpoint,'token_file':str(tokenfile)}
+            assert call('mask.get',{'job_id':mask['id']},config)['result']==mask
+            assert call('censor.get',{'job_id':censor['id']},config)['result']==censor
+            assert call('jobs.page',{},config)['ok']
+            assert httpx.post(endpoint+'/v1/ops/status',json={},trust_env=False).status_code in (401,403)
+            (out/'client-history.json').write_text(json.dumps({'passed':True,'authenticated_installed_client':True,'unauthenticated_refused':True}))
+        client_history()
         c.verify();c.terminate();c.wait();ready()
+        client_history()
         assert op('mask.segment',payload)==mask
         assert op('censor.process',request)==censor
         assert artifacts(mask)==data
