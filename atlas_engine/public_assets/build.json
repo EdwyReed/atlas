@@ -1,0 +1,10 @@
+{
+  "plugin_sha256": "d479dacaba9a75ec858e81a3c5333c6f2a432df2b953a99f6fcf73fbe10b72d9",
+  "sources": {
+    "plugin.js": "d479dacaba9a75ec858e81a3c5333c6f2a432df2b953a99f6fcf73fbe10b72d9",
+    "workspace.js": "a109c6e78edb9fe3ec32b3f774042e4d675ccd0d179eb34d4e6de45c3ec10981",
+    "creative-ui.js": "ba9c9eca00f723359dd0dc0ac5707ca32e21ed81c007554a33392d484b87a05a",
+    "creative-runtime.mjs": "5d909626e59d6fc6707a8225f74635466326637348bfcc7ab7bc2ad1426e9592"
+  },
+  "bundle_sha256": "d0626290938607ba13ae57ba8a07fb07e9450d456bed7fac9fa5ac8f66a93c15"
+}
