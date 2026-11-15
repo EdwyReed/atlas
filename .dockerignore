@@ -8,6 +8,8 @@
 !requirements-media-onnx.lock
 !container/
 !container/Dockerfile.media
+!container/Dockerfile.ssh
+!container/ssh-agent.py
 !container/init-media.py
 !requirements-build.lock
 !atlas_engine/

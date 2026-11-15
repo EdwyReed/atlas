@@ -1,0 +1,57 @@
+# Merge with an operator-owned base compose defining service `atlas`.
+# Provisioning fragment, NOT permission to start/cut over production.
+services:
+  atlas:
+    image: ${ATLAS_IMAGE_ID:?explicit accepted successor image ID required}
+    environment:
+      ATLAS_SSH_CONFIG: /run/atlas-ssh/config
+    depends_on:
+      atlas-ssh-agent:
+        condition: service_healthy
+    volumes:
+      - atlas-ssh-socket:/run/atlas-ssh-agent:ro
+      - type: bind
+        source: ${ATLAS_SSH_CONFIG_FILE:?explicit private alias config required}
+        target: /run/atlas-ssh/config
+        read_only: true
+        bind: {create_host_path: false}
+      - type: bind
+        source: ${ATLAS_SSH_KNOWN_HOSTS_FILE:?existing selected public host pins required}
+        target: /run/atlas-ssh/known_hosts
+        read_only: true
+        bind: {create_host_path: false}
+  atlas-ssh-agent:
+    image: ${ATLAS_IMAGE_ID:?explicit accepted successor image ID required}
+    user: '0:0'
+    entrypoint: [python, /opt/atlas/ssh-agent.py]
+    command: [--destination, '${ATLAS_SSH_DESTINATION:?existing user@hostname required}']
+    network_mode: none
+    read_only: true
+    cap_drop: [ALL]
+    # Namespace-root loader only; ssh-agent drops to application UID 10001.
+    cap_add: [CHOWN, SETUID, SETGID, DAC_OVERRIDE, KILL]
+    security_opt: ['no-new-privileges:true']
+    pids_limit: 32
+    mem_limit: 128m
+    restart: 'no'
+    stop_grace_period: 10s
+    tmpfs: ['/var/lib/atlas:rw,noexec,nosuid,size=1m']
+    volumes:
+      - atlas-ssh-socket:/run/atlas-ssh-agent
+      - type: bind
+        source: ${ATLAS_SSH_IDENTITY_FILE:?explicit existing authorized key file required}
+        target: /run/atlas-ssh/identity
+        read_only: true
+        bind: {create_host_path: false}
+      - type: bind
+        source: ${ATLAS_SSH_KNOWN_HOSTS_FILE:?existing selected public host pins required}
+        target: /run/atlas-ssh/known_hosts
+        read_only: true
+        bind: {create_host_path: false}
+    healthcheck:
+      test: [CMD-SHELL, 'test -S /run/atlas-ssh-agent/socket && test -f /run/atlas-ssh-agent/ready']
+      interval: 2s
+      timeout: 1s
+      retries: 10
+volumes:
+  atlas-ssh-socket: {}

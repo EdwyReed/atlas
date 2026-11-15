@@ -1,8 +1,14 @@
 # Atlas
 
-Standalone headless Atlas, unpublished development candidate 0.4.0.dev18. The canonical corpus is embedded Qdrant; operational state is SQLite. HTTP, Streamable HTTP MCP and a thin CLI share the existing Engine dispatch. Hermes and InvokeAI are optional clients/backend integrations, not startup dependencies.
+Standalone headless Atlas, unpublished development candidate 0.4.0.dev19. The canonical corpus is embedded Qdrant; operational state is SQLite. HTTP, Streamable HTTP MCP and a thin CLI share the existing Engine dispatch. Hermes and InvokeAI are optional clients/backend integrations, not startup dependencies.
 
 This is a development package, not completion of the full Atlas product. The current delivery boundary is Docker; [container/README.md](container/README.md) contains startup/provisioning commands. No UI is delivered. Versioned sections below preserve earlier acceptance; they are historical, not the current status matrix. Public schemas (`GET /v1/schema`) describe the actual operations; the older OPERATIONS.json is not a current acceptance claim.
+
+## dev19 SSH compatibility successor
+
+The narrow dev19 successor adds pinned OpenSSH to both dev18-final14 images and an optional `ATLAS_SSH_CONFIG` absolute-file binding shared by the existing Windows metadata and installer adapters. It preserves strict host-key checks, batch-only authentication and no agent forwarding. Without the environment binding, the host adapter retains its existing SSH configuration lookup. This does not select or enable an installer policy, change native/source credentials, enroll host keys, or certify a model install.
+
+Both successor images passed the same existing Windows read-only Python platform/version probe as UID10001, app restart and agent restart. A stopped agent and absent host pin fail closed. Full source/build/wheel/isolated-install/BOTH-image package names and bytes match; see [container instructions](container/README.md#existing-windows-ssh-transport--dev19) for immutable IDs and the constrained sidecar. The earlier dev18 feature evidence below is retained, not rerun or promoted to full-product acceptance. No production cutover occurred.
 
 ## Current standalone outcome — dev18
 

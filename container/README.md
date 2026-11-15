@@ -1,6 +1,45 @@
 # Atlas container delivery
 
-Current development package: dev18, not full-product completion. Core HTTP/MCP/CLI/auth/nonroot/read-only-rootfs/ownership/restart and retained recovery-data restore into an independent container have been exercised. Optional CPU media image `atlas-core:media-dev18-r6`, immutable ID `sha256:a991fdbf534164294f3ccc61046a0b66fb2dcc9d3950ff190942dbcd06d7e29a`, passed actual MobileSAM + NTD11 CPU inference/artifact/restart checks on synthetic geometry. It predates the newest source-credential wiring; do not assume that tag equals later source. Media inference/detection quality, actual model install/GPU execution and fresh live-state migration are separate acceptance boundaries. Historical dev12/dev10 instructions below retain their original evidence only.
+Current development package: dev19, not full-product completion. The SSH-only successor IDs and provisioning boundary are below. Earlier dev18 feature evidence remains applicable to unchanged modules; historical dev12/dev10 instructions retain their original evidence only. No production deployment is implied.
+
+## Existing Windows SSH transport — dev19
+
+| Artifact | Immutable local identity |
+|---|---|
+| `atlas-core:standalone-dev19-ssh1` | `sha256:e821ca4dc3ebcfff8ca0758b49060f23736c4052a0fa5d49786d125e3814a25e` |
+| PRIVATE `atlas-core:media-dev19-ssh1` | `sha256:d922ec0fa8e22c0c9e0e4acd64ce0736e773175eb20cfdc1e7fa2490672de5a4` |
+| `atlas_engine-0.4.0.dev19-py3-none-any.whl` | SHA256 `c1abfd4842f92414f1027d28d4a860b18019c36730a0fd06278410aa69d46b9f` |
+
+`container/Dockerfile.ssh` is the narrow successor recipe for an explicitly pinned existing core OR media image plus a named `atlas_release` directory containing only the wheel. It adds `openssh-client=1:9.2p1-2+deb12u10` and its system dependency closure, installs the wheel without Python dependency resolution, and copies the agent helper. It does not rebuild heavy semantic/media dependencies. The main Dockerfile also provisions SSH for future clean builds; only the narrow successor images above were exercised in dev19. This is not reproducible-image or general dependency-upgrade acceptance. Original dev18-final14 images remain rollback material.
+
+`container/compose.ssh.yaml` merges into an operator-owned base defining service `atlas`. Bind explicit accepted `ATLAS_IMAGE_ID`, existing single `ATLAS_SSH_IDENTITY_FILE`, existing selected `ATLAS_SSH_KNOWN_HOSTS_FILE`, alias-only `ATLAS_SSH_CONFIG_FILE` and exact `ATLAS_SSH_DESTINATION` (`user@hostname`). Missing inputs refuse. Use `docker compose -f ABS_BASE -f container/compose.ssh.yaml config` for preflight; it does NOT authorize `up`, activation or changing live configuration. Do not use a dev18 `init` helper on an existing config volume.
+
+The private SSH config must bind the existing policy alias to its already trusted target and user, with these options (replace only the alias/target/user placeholders):
+
+```sshconfig
+Host EXISTING_ALIAS
+    HostName EXISTING_HOSTNAME
+    User EXISTING_USER
+    IdentityAgent /run/atlas-ssh-agent/socket
+    IdentityFile none
+    UserKnownHostsFile /run/atlas-ssh/known_hosts
+    GlobalKnownHostsFile /dev/null
+    StrictHostKeyChecking yes
+    UpdateHostKeys no
+    PasswordAuthentication no
+    KbdInteractiveAuthentication no
+    ForwardAgent no
+```
+
+Mount the one existing key read-only into the network-disabled sidecar ONLY, never the application, a whole `.ssh` directory or HOME. The namespace-root loader has only the declared mount/UID-management capabilities; the agent runs as UID10001 and accepts only the destination constrained by the existing host pins. The application stays UID10001 with a read-only socket mount and no key material. The sidecar cannot enroll/update host keys or create credentials. Missing/unreadable/encrypted identity, absent pins, stopped agent and unknown host refuse without credential fallback. Coordinate sidecar stop with application stop; Compose readiness orders initial startup, not automatic lifecycle coupling. The socket permits signing to the existing destination, not a per-command remote ACL; retain the operator's existing Windows account permissions and do not treat this as a new grant.
+
+The retained release evidence includes a read-only Windows probe for both exact image IDs, including app/agent restart and stopped-agent/unknown-pin refusal. It records complete package names and hashes across source, build, wheel, isolated install and both images, including sidecar/media-init helper equality. There are no production data mounts in these checks. `verification/ssh_release_parity.py --help` documents the offline repeat command. Generated Python bytecode is excluded from filesystem inventories; every actual wheel package member must match. The isolated install is package-only (`--no-deps`), not a second full dependency acceptance. Documents are updated outside the frozen wheel; wheel METADATA retains the build-time README.
+
+The deployment owner supplies the private provisioning bindings and owns final fencing, refresh, reconciliation and activation. Baseline `UPSTREAM_UNAVAILABLE` is independent of this transport fix. No GPU, installer, native write, service restart, credential copy or cutover was performed by this release finish.
+
+## Retained dev18 feature evidence
+
+Core HTTP/MCP/CLI/auth/nonroot/read-only-rootfs/ownership/restart and retained recovery-data restore into an independent container have been exercised. Optional CPU media image `atlas-core:media-dev18-r6`, immutable ID `sha256:a991fdbf534164294f3ccc61046a0b66fb2dcc9d3950ff190942dbcd06d7e29a`, passed actual MobileSAM + NTD11 CPU inference/artifact/restart checks on synthetic geometry. It predates the newest source-credential wiring; do not assume that tag equals later source. Media inference/detection quality, actual model install/GPU execution and fresh live-state migration are separate acceptance boundaries.
 
 ## Optional private CPU media image
 

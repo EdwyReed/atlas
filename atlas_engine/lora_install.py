@@ -4,6 +4,7 @@ from pathlib import Path
 import re
 import subprocess
 from .contracts import Fault
+from .windows_ssh import command as ssh_command
 from .lora_windows import parse_link, InstallError
 
 
@@ -32,7 +33,7 @@ def execute(policy,p,model_type=None):
     if model_type is not None:request['model_type']=model_type
     if 'expected_sha256' in p:request['expected_sha256']=p['expected_sha256']
     script+='\nmain('+repr(request)+')\n'
-    cmd=['ssh','-o','BatchMode=yes','-o','ConnectTimeout=10','-o','StrictHostKeyChecking=yes',cfg['ssh_host'],'python -I -c "exec(__import__(\'sys\').stdin.read())"']
+    cmd=ssh_command(cfg)
     try:
         proc=subprocess.run(cmd,input=script,capture_output=True,text=True,timeout=1200)
         if proc.returncode:raise Fault('WINDOWS_INSTALL_UNCERTAIN','Windows worker failed; inspect remote journal, do not replay')

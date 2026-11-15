@@ -7,6 +7,7 @@ import re
 import subprocess
 from .contracts import Fault
 from .lora_install import descriptor
+from .windows_ssh import command as ssh_command
 from .civitai_readonly_windows import validate, MAXIMUM
 
 
@@ -18,9 +19,7 @@ def fetch(policy, url):
     cfg = descriptor(policy)
     script = Path(__file__).with_name('civitai_readonly_windows.py').read_text()
     script += '\nmain(' + repr(url) + ')\n'
-    cmd = ['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', '-o',
-           'StrictHostKeyChecking=yes', cfg['ssh_host'],
-           'python -I -c "exec(__import__(\'sys\').stdin.read())"']
+    cmd = ssh_command(cfg)
     try:
         proc = subprocess.run(cmd, input=script, capture_output=True, text=True, timeout=55)
         if proc.returncode or len(proc.stdout) > MAXIMUM * 6 + 1024:

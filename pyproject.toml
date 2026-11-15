@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "atlas-engine"
-version = "0.4.0.dev18"
+version = "0.4.0.dev19"
 description = "Atlas standalone headless corpus and image workflow engine"
 readme = "README.md"
 requires-python = ">=3.11"

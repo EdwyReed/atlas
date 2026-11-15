@@ -1,0 +1,11 @@
+# Narrow dependency successor of an immutable accepted core OR media image.
+# Does not rebuild semantic/media layers. No keys/config/weights in build context.
+ARG ATLAS_IMAGE=atlas-core:standalone-dev18-final14
+FROM ${ATLAS_IMAGE}
+USER 0:0
+RUN apt-get update && apt-get install -y --no-install-recommends openssh-client=1:9.2p1-2+deb12u10 \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=atlas_release / /opt/atlas/ssh-release/
+RUN pip install --no-cache-dir --no-deps --force-reinstall /opt/atlas/ssh-release/*.whl
+COPY container/ssh-agent.py /opt/atlas/ssh-agent.py
+USER 10001:10001
