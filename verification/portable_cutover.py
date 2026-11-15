@@ -24,9 +24,10 @@ def inside(a,b):
     if sb.sha(Path('/run/capture-versions.json'))!=b['capture_versions_sha256']:
         raise ValueError('capture executable version pin differs')
     if a.phase=='prepare':
-        if ctl.read(root/sb.MARKER)['backup_manifest_sha256']!=b['capture_manifest_sha256']:
+        if not b.get('rebase_refresh_sha256') and ctl.read(root/sb.MARKER)['backup_manifest_sha256']!=b['capture_manifest_sha256']:
             raise ValueError('not selected original capture')
-        result=pr.prepare(root,plan,source,ctl.read('/run/capture-versions.json'))
+        result=pr.prepare(root,plan,source,ctl.read('/run/capture-versions.json'),
+                          b.get('rebase_refresh_sha256'),b['capture_manifest_sha256'])
     elif a.phase=='apply':
         result=ctl.refresh(root,plan,a.sha256)
     elif a.phase=='activate':
@@ -34,6 +35,11 @@ def inside(a,b):
         # Source must STILL be stopped and byte-identical to this final cut.
         with sb.offline(source):
             pr.validate_source(source,root,ctl.read(plan))
+            state=sb.restore_state(root)
+            cut=ctl.bound_record(state['refresh'])
+            if cut['plan_sha256']!=sb.sha(plan):raise ValueError('stale final cut plan')
+            if cut['portable_held_rows']!=b['expected_held_rows'] or pt.protected_rows(root)!=b['expected_held_rows']:
+                raise ValueError('exact protected identities/digests differ')
             result=pt.activate(root,report)
     else:
         with sb.offline(source),sb.offline(root):
@@ -44,9 +50,12 @@ def inside(a,b):
                 if ad.ledger(s)!=ad.ledger(t):raise ValueError('whole final ledger differs')
             if ctl.payload_files(source)!=ctl.payload_files(root):raise ValueError('whole owned payload differs')
             cut=ctl.bound_record(state['refresh']);held=cut['portable_held_rows']
+            if cut['plan_sha256']!=sb.sha(plan):raise ValueError('stale final cut plan')
             if len(held)!=b['expected_held']:raise ValueError('held count differs from operator binding')
+            if held!=b['expected_held_rows'] or pt.protected_rows(root)!=held:
+                raise ValueError('exact protected identities/digests differ')
             result={'verified':True,'manifest_sha256':state['backup_manifest_sha256'],
-                    'refresh':state['refresh'],'held':len(held),'source_unchanged':True}
+                    'refresh':state['refresh'],'held':len(held),'held_rows':held,'source_unchanged':True}
             if a.phase=='report':
                 if not a.operator or not a.assessment:raise ValueError('explicit operator and assessment required')
                 sb.write_json(report,{'target_root':str(root),'operator':a.operator,'assessment':a.assessment,

@@ -21,7 +21,10 @@ unknown effects, run native actions or install models.
 - Stage only changed owned files plus the complete registry backup. Immutable
   references, vocabulary and portable media remain pinned and unchanged. Verify
   original historical reference files through explicit individual read-only mounts.
-- Preserve every original uncertain historical effect row exactly; changed holds
+- Preserve every explicit configured-source exclusion exactly, INCLUDING terminal
+  rows and kinds outside the nonterminal native selection. Union hash-bound archived
+  admission lineage with current nonterminal effect rows; compare exact sorted IDs,
+  kinds, states and full-row SHA256, not just count. Preserve uncertain rows; changed holds
   require a separate operator review, not an automatic terminal inference. Retain
   completed states and all current source tables, events and result links.
 - Reject destination writes, changed source cuts, corrupt staged bytes and stale
@@ -75,19 +78,55 @@ old SSH release's source-pinned renderer cannot be used unchanged with new sourc
 the private successor handoff includes a separately pinned render-only copy.
 Startup/restart and read-only observer acceptance on real data remain owner work.
 
+## Rebase a completed, never-activated final cut
+
+After a failed verification and OLD resumption, the previous cut must not activate.
+Keep the existing quarantine and prior evidence. This is not same-cut interruption
+recovery: an incomplete target can ONLY resume its exact plan and unchanged source.
+Never change a marker, lower the expected count, or reconstruct a baseline from a
+target that has been activated or has successor writes.
+
+Render a NEW binding/evidence directory with the ORIGINAL capture hash and the
+explicit reviewed previous `restore-state.refresh.sha256`:
+
+```sh
+python3 -I -B verification/portable_binding.py \
+  --image "$PINNED_IMAGE_ID" --volume "$QUARANTINE_VOLUME" \
+  --source-root "$CURRENT_OLD_ROOT" --capture-manifest "$ORIGINAL_MANIFEST_SHA256" \
+  --capture-python "$ORIGINAL_PACK_PYTHON" --expected-held "$REVIEWED_HELD_COUNT" \
+  --rebase-refresh-sha256 "$REVIEWED_PREVIOUS_REFRESH_SHA256" --out "$NEW_CUT_DIR"
+```
+
+The renderer reads the archived configured-source admission record and pins every
+protected row in `binding.json.expected_held_rows`. `prepare` must run only after
+the deployment owner fences OLD, using the SAME explicit phases above. It proves
+the previous destination-bound final manifest, ledger and payload still match;
+checks the historical executable against the reviewed prior cut (not the new
+successor executable); verifies archived exclusion records by their original
+hashes without following absolute pointers into OLD; and stages a new current cut.
+The new final manifest retains the original capture hash and the bound prior final
+manifest. All normal apply/activation runtime checks still require the new runtime.
+No second full reference/model archive is needed. Changed holds require a separate
+review; newly discovered holds cannot silently pass an operator binding with a reviewed count.
+
+`verify` emits all exact protected rows. Both report creation and activation check
+them against the binding, the current ledger and the current plan hash. Old reports,
+old plans, source drift, destination writes, and already activated targets refuse.
+
 ## Frozen source-only successor
 
 Wheel version remains `0.4.0.dev19` for this private package-only release. Select by
 exact SHA256, not version or a mutable tag:
 
-- Wheel SHA256: `956a3443fe78066d662b96dc0b0e6246e7c312d3c1ef99d06785b6d8cbca5de3`.
-- Core: `sha256:425511778ead40d45e6979a77bab5d1f7848bcc503ed1c1970ef830b69ad3065`.
-- Private media: `sha256:2281100088255af515c24ad108ec2b44632b8da4bfbfb32f15db827bda0c6274`.
+- Wheel SHA256: `467b2eff78d6cff8b2043dd50b513933256ad82cb0d94a4f724fdedb94e5cd30`.
+- Core: `sha256:b1e78ba3768cd88182c046dcafdb522b328c641da3a4e2580e7882c5817d2640`.
+- Private media: `sha256:e37846fee0230b05fdac5ce71345c3277a9fb711bcd73fe0c504bce7214340b2`.
 
 `container/Dockerfile.delta` installs only the selected wheel over the accepted
-SSH bases. Every retained dependency layer and SSH/media helper stays byte-identical.
-Do not use superseded `delta1` artifacts; they lack the final clean read-only
-registry snapshot fix. Original final14 and SSH images remain rollback material.
+delta2 bases. Every retained dependency layer and SSH/media helper stays byte-identical.
+Do not use delta1/delta2 for another cutover: delta1 lacks the clean read-only
+registry snapshot fix; delta2 drops terminal configured-source holds and cannot
+rebase. Preserve those immutable images and original final14/SSH rollback material.
 
 ## Executed engineering acceptance
 
@@ -104,6 +143,17 @@ on disposable volumes: core with a clean read-only source and media with a
 committed WAL. Exact source file sets and bytes remain unchanged, including
 sidecars. The activated target is readable by application UID10001 with no
 wrong-owner files. Owned fixture volumes are removed.
+
+`verification/portable_rebase.py` runs the actual shipped delta2 executable on a
+redacted real-shaped fixture: two observing generations, one succeeded generation
+still explicitly protected, and four ack_unknown native-admin jobs. It reproduces
+six selected holds while all seven rows remain in SQLite. The installed successor
+rebases this old-runtime cut after new OLD records, preserves the exact seven,
+recovers a second-cut interruption, and refuses stale plans/reports and activated
+successor writes. Separate explicit-exclusion checks span effect/CPU/batch kinds.
+Installed HTTP/MCP receipt reads and restart occur after a repeated final refresh;
+both Docker images exercise repeat final cut, exact-hash mismatch at unchanged
+count, stale-source activation and prior-report refusal on disposable volumes.
 
 `verification/portable_state.py` retains original populated pack/restore,
 relocation, quarantine, explicit activation, new local corpus work, HTTP/MCP and

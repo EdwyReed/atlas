@@ -342,6 +342,45 @@ def unpack(source, destination, after_copy=None):
             'manifest_sha256':state['backup_manifest_sha256']}
 
 
+def protected_rows(root, state=None):
+    """Carry explicit exclusions across relocation, including terminal jobs.
+
+    Read archived admission records by their literal hash, never by following a
+    historical absolute pointer into a possibly resumed source runtime.
+    """
+    from . import adoption as ad
+    from .adoption_native import row_pins
+    root = Path(root)
+    state = state if state is not None else sb.restore_state(root)
+    pins = {}
+    lineage = state
+    for _ in range(64):
+        if not lineage:
+            break
+        for key in ('held_admission', 'preserved_holds'):
+            ref = lineage.get(key)
+            if not ref:
+                continue
+            old = Path(ref['path'])
+            if old.parent != Path(lineage['storage_target_root'])/'.adoption':
+                raise ValueError('historical hold record outside owner control directory')
+            path = root/'.adoption'/old.name
+            if sb.sha(path) != ref['sha256']:
+                raise ValueError('archived historical hold evidence changed')
+            for pin in json.loads(path.read_text())['held_rows']:
+                pins.setdefault(pin['id'], pin)
+        lineage = lineage.get('previous_restore')
+    else:
+        raise ValueError('historical hold lineage too deep')
+    expected = [pins[k] for k in sorted(pins)]
+    if row_pins(root, sorted(pins)) != expected:
+        raise ValueError('explicit historical protected rows changed')
+    with closing(ad.connection(root/'registry.sqlite3', closed=True)) as db:
+        ids = {r[0] for r in db.execute('select id,kind,state from jobs')
+               if r[1] in HISTORICAL_EFFECTS and r[2] not in sb.TERMINAL}
+    return row_pins(root, sorted(ids | set(pins)))
+
+
 def validate_admission(root,state,report):
     from .adoption_native import row_pins
     if (report.get('admission')!=ADMISSION or report.get('runtime')!=sb.versions()
@@ -378,7 +417,8 @@ def activate(root, report_path):
         with closing(ad.connection(root/'registry.sqlite3',closed=True)) as db:
             rows=db.execute('select id,kind,state from jobs order by id').fetchall()
             historical=[r[0] for r in rows if r[1] in HISTORICAL_EFFECTS]
-            held=[r[0] for r in rows if r[1] in HISTORICAL_EFFECTS and r[2] not in sb.TERMINAL]
+            held=[r['id'] for r in protected_rows(root,state)]
+            historical=sorted(set(historical)|set(held))
             uploads=[r[0] for r in db.execute("select id from uploads where state in ('importing','ack_unknown') order by id")]
         accepted={**report,'admission':ADMISSION,'held_rows':row_pins(root,held),
                   'historical_native_ids':historical,'held_upload_ids':uploads,

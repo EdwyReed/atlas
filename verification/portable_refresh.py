@@ -22,8 +22,18 @@ def run(a):
     e=engine(source)
     holds=[]
     for n in range(7):
-        j,_=e.repo.reserve('fixture','fixture','hold-'+str(n),'generation',{'request_id':'hold-'+str(n)})
-        e.repo.update(j['id'],'ack_unknown');holds.append(j['id'])
+        kind='generation' if n<3 else 'native_admin'
+        j,_=e.repo.reserve('fixture','fixture','hold-'+str(n),kind,{'native_item_id':2380+n,'project':None} if n<3 else {'operation':'fixture'})
+        state=('succeeded' if n==2 else 'observing') if n<3 else 'ack_unknown'
+        data={'payload':{'native_item_id':2380+n,'project':None},'source_client':'fixture',
+              'artifact_state':'available','author':'fixture','embedding_state':'pending',
+              'history_missing':False,'index_state':'pending','native_ids':[2380+n],
+              'native_items':{str(2380+n):{'batch_id':'redacted-batch','created_at':'redacted-time',
+                  'error_type':None,'graph_id':'redacted-graph','item_id':2380+n,'origin':'fixture',
+                  'outputs':['redacted.png'],'session_id':'redacted-session','status':'completed',
+                  'status_sequence':1,'updated_at':'redacted-time'}},'outputs':['redacted.png'],
+              'provenance':'fixture','render_state':'completed','upstream_user_id':'system'}
+        e.repo.update(j['id'],state,data if n<3 else {'source_client':'fixture'});holds.append(j['id'])
     old,_=e.repo.reserve('fixture','fixture','progress','dream',{'request_id':'progress'})
     e.corpus.append('tags',{'tag':'old'},{'value':1},{'source':'fixture'},None,{},['fixture',1])
     (source/'artifacts/blob').write_bytes(b'old artifact')
@@ -32,6 +42,14 @@ def run(a):
     sb.write_json(source/sb.MARKER,{'format':'atlas-restored-state-v1','storage_target_root':str(source),
         'storage_source_roots':['/historical/not-current'],'preimage_verified':True,'reconciled':True,
         'backup_manifest_sha256':'historical','previous_restore':None})
+    marker=ctl.read(source/sb.MARKER)
+    hold_report={'admission':'configured-source-v1','held_rows':row_pins(source,sorted(holds)),
+        'historical_native_ids':sorted(holds),'target_root':str(source),'runtime':sb.versions(),
+        'operator':'fixture','previous_admission':None,'refresh':None,'final_cut_review':[],
+        'capture_receipt_sha256':'redacted','registry_logical_sha256':sb.registry_digest(source),
+        'evidence':{},'native':{},'native_preflight_requests':0,'progress_assessment':'Retain exact exclusions.'}
+    marker['held_admission']=ctl.record(source,'configured-native',hold_report)
+    ctl.atomic(source/sb.MARKER,marker)
     # Literal adoption provenance deliberately names a DIFFERENT historical root.
     sb.write_json(source/'adoption-receipt.json',{'plan':{'source_root':'/historical/not-current','native_binding':None},'opaque':'unchanged'})
     historical=out/'historical.sqlite3'
@@ -53,7 +71,10 @@ def run(a):
         raise AssertionError('accepted '+label)
     refuse('old canonical-only migration',lambda:ctl.refresh_prepare(target,out/'old-plan'))
     # Current corpus + progressed terminal job + new artifact/ledger AFTER capture.
-    e=engine(source)
+    from types import SimpleNamespace
+    from atlas_engine.corpus import Corpus
+    repo=Repository(source);corpus=Corpus(source/'corpus',repo)
+    e=SimpleNamespace(repo=repo,corpus=corpus,close=corpus.close)
     e.repo.update(old['id'],'succeeded',{'result':{'finished':True}})
     added,_=e.repo.reserve('fixture','fixture','new-terminal','dream',{'request_id':'new-terminal'})
     e.repo.update(added['id'],'succeeded',{'result':{'new':True}})
@@ -72,7 +93,7 @@ def run(a):
     changed_hold=pr.prepare(target,out/'changed-hold.json',source,capture_versions)
     refuse('changed uncertain historical hold',lambda:ctl.refresh(target,out/'changed-hold.json',changed_hold['plan_sha256']))
     with sqlite3.connect(source/'registry.sqlite3') as db:
-        db.execute('update jobs set state=? where id=?',('ack_unknown',holds[0]))
+        db.execute('update jobs set state=? where id=?',('observing',holds[0]))
     # Keep a committed operational WAL open: refresh must backup, not copy main DB.
     writer=sqlite3.connect(source/'registry.sqlite3');writer.execute('pragma journal_mode=WAL')
     writer.execute('pragma wal_autocheckpoint=0');writer.execute("insert into health values('wal-cut','{}')");writer.commit()
@@ -136,6 +157,7 @@ def run(a):
     assert (target/'adoption-receipt.json').read_bytes()==(source/'adoption-receipt.json').read_bytes()
     assert ctl.read(target/'portable-state.json')==plan['portable_metadata']
     transition=ctl.bound_record(sb.restore_state(target)['refresh'])
+    assert transition['portable_held_rows']==held_before
     assert 'artifacts/unchanged-large' not in transition['changes']
     assert ad.raw_collections(source)==ad.raw_collections(target)
     pr.validate_final(target,sb.restore_state(target))
@@ -143,8 +165,21 @@ def run(a):
     stale.update(registry_logical_sha256=sb.registry_digest(target))
     sb.write_json(out/'stale-current-ledger.json',stale)
     refuse('old manifest even with current ledger',lambda:pt.activate(target,out/'stale-current-ledger.json'))
+    previous_final=sb.restore_state(target)
+    with sqlite3.connect(source/'registry.sqlite3') as db:
+        db.execute("insert into health values('OLD-resumed-after-verify','{}')")
+    rebase_before=ad.source_inventory(source)
+    rebase=pr.prepare(target,out/'rebase-plan.json',source,capture_versions,
+        previous_final['refresh']['sha256'],captured['backup_manifest_sha256'])
+    ctl.refresh(target,out/'rebase-plan.json',rebase['plan_sha256'])
+    assert ad.source_inventory(source)==rebase_before
+    assert pt.protected_rows(target)==held_before
+    with closing(ad.connection(source/'registry.sqlite3',closed=True)) as s,closing(ad.connection(target/'registry.sqlite3',closed=True)) as t:
+        assert ad.ledger(s)==ad.ledger(t)
+    pr.validate_final(target,sb.restore_state(target))
     final=sb.restore_state(target)
-    accepted={**stale,'backup_manifest_sha256':final['backup_manifest_sha256'],'refresh':final['refresh']}
+    accepted={**stale,'backup_manifest_sha256':final['backup_manifest_sha256'],'refresh':final['refresh'],
+              'registry_logical_sha256':sb.registry_digest(target)}
     sb.write_json(out/'activation.json',accepted);pt.activate(target,out/'activation.json')
     refuse('activated successor refresh',lambda:pr.prepare(target,out/'activated.json',source,capture_versions))
     writer.close()
@@ -180,7 +215,8 @@ def run(a):
             finally:proc.terminate();proc.wait(timeout=30)
         assert row_pins(target,sorted(holds))==held_before
     sb.write_json(out/'result.json',{'passed':True,'synthetic_only':True,'checks':checks,'refresh':result,
-        'held_unchanged':len(holds),'authoritative_ledger_equal':True,'raw_corpus_equal':True,
+        'held_unchanged':len(holds),'exact_held_rows':held_before,'rebase_before_http_mcp':True,
+        'authoritative_ledger_equal':True,'raw_corpus_equal':True,
         'source_unchanged':True,'http_mcp_starts':2,'delta_bytes':sum(x['bytes'] for x in transition['changes'].values()),
         'unchanged_large_file_not_staged':True,'runtime':sb.versions()})
     print(dump({'passed':True,'evidence':str(out/'result.json')}))

@@ -5,6 +5,7 @@ Only that disposable source gets a WAL fixture write. Runs the actual operator
 runner through prepare/apply/verify/report/checksum-bound activate in both images.
 """
 import argparse
+from contextlib import closing
 import hashlib
 import json
 from pathlib import Path
@@ -75,6 +76,36 @@ def main():
                 return json.loads(output.splitlines()[-1])
             prepared=phase('prepare');phase('apply','--sha256',prepared['plan_sha256'])
             verified=phase('verify');report=phase('report','--operator','fixture','--assessment','Retain all historical effects; synthetic Docker acceptance.')
+            assert len(verified['held_rows'])==7 and any(r['state']=='succeeded' for r in verified['held_rows'])
+            original_binding=json.loads(path.read_text())
+            wrong_binding={**original_binding,'expected_held_rows':[dict(r) for r in original_binding['expected_held_rows']]}
+            wrong_binding['expected_held_rows'][0]['row_sha256']='0'*64
+            wrong_path=work/'wrong-exact-binding.json';wrong_path.write_text(json.dumps(wrong_binding))
+            rejected=subprocess.run([sys.executable,'-I','-B',str(runner),'verify','--binding',str(wrong_path)],capture_output=True,text=True)
+            assert rejected.returncode and 'exact protected identities/digests differ' in rejected.stderr
+            assert inventory(source)==before,'first cut changed source'
+            old_work=work;old_path=path;old_report=(work/'activation.json').read_bytes()
+            with closing(sqlite3.connect(source/'registry.sqlite3')) as db:
+                db.execute("insert into health values(?, '{}')",('docker-OLD-resumed-'+scenario,));db.commit()
+            before=inventory(source)
+            # A previously valid report and stopped-source plan are now stale.
+            stale=subprocess.run([sys.executable,'-I','-B',str(runner),'activate','--binding',str(old_path),
+                '--sha256',report['activation_report_sha256']],capture_output=True,text=True)
+            assert stale.returncode and 'source cut changed' in stale.stderr,stale.stderr
+            work=a.out/(scenario+'-rebase')
+            run([sys.executable,'-I','-B',runner.with_name('portable_binding.py'),
+                '--image',image,'--volume',volume,'--source-root',source,
+                '--capture-manifest',manifest,'--capture-python',a.capture_python,'--expected-held','7',
+                '--rebase-refresh-sha256',verified['refresh']['sha256'],'--out',work])
+            path=work/'binding.json'
+            prepared=phase('prepare');phase('apply','--sha256',prepared['plan_sha256'])
+            verified=phase('verify');report=phase('report','--operator','fixture','--assessment','Retain exact seven after OLD resumed.')
+            assert verified['held_rows']==original_binding['expected_held_rows']
+            new_report=(work/'activation.json').read_bytes();(work/'activation.json').write_bytes(old_report)
+            stale=subprocess.run([sys.executable,'-I','-B',str(runner),'activate','--binding',str(path),
+                '--sha256',sha(work/'activation.json')],capture_output=True,text=True)
+            assert stale.returncode and 'activation must bind' in stale.stderr,stale.stderr
+            (work/'activation.json').write_bytes(new_report)
             wrong=subprocess.run([sys.executable,'-I','-B',str(runner),'activate','--binding',str(path),'--sha256','0'*64],capture_output=True,text=True)
             assert wrong.returncode and 'checksum differs' in wrong.stderr,wrong.stderr
             (work/'wrong-report-refusal.log').write_text(wrong.stderr)
@@ -88,7 +119,9 @@ def main():
             if scenario=='wal':assert observed['wal_row']==1,observed
             assert inventory(source)==before,'source bytes or file set changed'
             receipts.append({'scenario':scenario,'image':image,'verified':verified,'app':observed,
-                'source_exact_bytes_and_files_unchanged':True,'wrong_activation_sha_refused':True})
+                'source_exact_bytes_and_files_unchanged':True,'wrong_activation_sha_refused':True,
+                'rebase_after_OLD_resumed':True,'exact_identity_mismatch_refused':True,
+                'stale_source_and_prior_report_refused':True})
         finally:
             run(['docker','volume','rm',volume])
             if writer:writer.close()

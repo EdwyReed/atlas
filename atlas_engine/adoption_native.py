@@ -42,7 +42,7 @@ def preflight(binding, invoke, expected):
 
 
 def row_pins(root, ids):
-    with closing(ad.connection(Path(root)/'registry.sqlite3')) as db:
+    with closing(ad.connection(Path(root)/'registry.sqlite3', closed=True)) as db:
         db.row_factory=sqlite3.Row
         result=[]
         for jid in ids:

@@ -71,7 +71,7 @@ def validate_source(source, root, plan):
     ad.raw_collections(source)  # refuses uncheckpointed Qdrant; never loads it
 
 
-def prepare(root, output, source, capture_versions):
+def prepare(root, output, source, capture_versions, rebase_refresh_sha256=None, capture_manifest_sha256=None):
     root, source = sb.safe_path(root), sb.safe_path(source)
     if source == root or source in root.parents or root in source.parents:
         raise ValueError('overlapping refresh roots')
@@ -81,12 +81,31 @@ def prepare(root, output, source, capture_versions):
     with sb.offline(source), sb.offline(root):
         state = sb.restore_state(root)
         if (not state or not state.get('portable_restore') or state['reconciled']
-                or state.get('held_admission') or state.get('refresh')):
-            raise ValueError('original never-activated portable quarantine required')
+                or state.get('held_admission') or state.get('refresh_pending')):
+            raise ValueError('completed never-activated portable quarantine required')
         before = ad.source_inventory(source)
         if capture_versions['qdrant-client'] != sb.versions()['qdrant-client']:
             raise ValueError('capture Qdrant version differs')
-        manifest = capture_manifest(root, state, capture_versions)
+        if state.get('refresh'):
+            if not rebase_refresh_sha256 or state['refresh']['sha256'] != rebase_refresh_sha256:
+                raise ValueError('explicit previous refresh SHA256 required for rebase')
+            # The reviewed previous cut pins its OWN historical executable. A
+            # package-only successor necessarily has different source_modules.
+            prior_cut = ctl.bound_record(state['refresh'])
+            validate_final(root, state, expected_runtime=prior_cut['runtime'])
+            previous = ctl.bound_record(state['portable_final_manifest'])
+            original = previous['capture_manifest_sha256']
+            if not capture_manifest_sha256 or original != capture_manifest_sha256:
+                raise ValueError('rebase original capture manifest binding differs')
+            manifest = {'registry':ctl.bound_record(state['refresh'])['registry']}
+        else:
+            if rebase_refresh_sha256:
+                raise ValueError('rebase requires an existing completed final cut')
+            manifest = capture_manifest(root, state, capture_versions)
+            original = state['backup_manifest_sha256']
+            if capture_manifest_sha256 and original != capture_manifest_sha256:
+                raise ValueError('original capture manifest binding differs')
+        pt.protected_rows(root,state)
         metadata = pt.References(root).validate().metadata
         if metadata['source_root'] != str(source) or str(source) not in state['storage_source_roots']:
             raise ValueError('explicit source must equal portable capture source')
@@ -98,6 +117,8 @@ def prepare(root, output, source, capture_versions):
                 'target_registry':manifest['registry'],'target_files':ctl.payload_files(root),
                 'source_root':str(source),'source_inventory':before,'source_schema':schema,
                 'portable_metadata':metadata,'capture_manifest':manifest,
+                'original_capture_manifest_sha256':original,
+                'rebase_refresh_sha256':rebase_refresh_sha256,
                 'immutable_files':immutable_files(root),
                 'capture_receipt_sha256':sb.sha(root/'adoption-receipt.json') if (root/'adoption-receipt.json').exists() else None}
         validate_source(source,root,plan)
@@ -109,7 +130,7 @@ def review(root, staged):
     from .adoption_native import row_pins
     with closing(ad.connection(root/'registry.sqlite3',closed=True)) as old, closing(ad.connection(staged,closed=True)) as new:
         rows = old.execute('select id,kind,state from jobs order by id').fetchall()
-        held = [r[0] for r in rows if r[1] in pt.HISTORICAL_EFFECTS and r[2] not in sb.TERMINAL]
+        held = [r['id'] for r in pt.protected_rows(root)]
         for ident, kind, state in rows:
             current = new.execute('select state from jobs where id=?',(ident,)).fetchone()
             if current is None or (state in sb.TERMINAL and current[0] != state):
@@ -119,12 +140,19 @@ def review(root, staged):
     # evidence reconciliation is smuggled into the data movement operation.
     if row_pins(staged.parent, held) != pins:
         raise ValueError('historical held rows changed; separate review required')
-    return pins
+    with closing(ad.connection(staged,closed=True)) as db:
+        held = sorted(set(held)|{r[0] for r in db.execute('select id,kind,state from jobs')
+                                if r[1] in pt.HISTORICAL_EFFECTS and r[2] not in sb.TERMINAL})
+    return row_pins(staged.parent, held)
 
 
 def seal(root, state, transition):
+    previous = state.get('portable_final_manifest')
+    original = (ctl.bound_record(previous)['capture_manifest_sha256'] if previous
+                else state['backup_manifest_sha256'])
     manifest = {'format':'atlas-portable-final-cut-v1','target_root':str(root),
-                'capture_manifest_sha256':state['backup_manifest_sha256'],
+                'capture_manifest_sha256':original,
+                'previous_final_manifest':previous,
                 'portable_metadata_sha256':sb.sha(root/'portable-state.json'),
                 'immutable_files':immutable_files(root),
                 'runtime':sb.versions(),'cut':transition}
@@ -134,12 +162,13 @@ def seal(root, state, transition):
     return state
 
 
-def validate_final(root, state):
+def validate_final(root, state, expected_runtime=None):
     if not state.get('portable_final_manifest'): return
     manifest = ctl.bound_record(state['portable_final_manifest'])
     cut = ctl.bound_record(state['refresh'])
     if (digest(manifest) != state['backup_manifest_sha256'] or manifest['cut'] != cut
-            or manifest['runtime'] != sb.versions() or manifest['target_root'] != str(root)
+            or manifest['runtime'] != (expected_runtime or sb.versions())
+            or cut['runtime'] != manifest['runtime'] or manifest['target_root'] != str(root)
             or manifest['portable_metadata_sha256'] != sb.sha(root/'portable-state.json')
             or manifest['immutable_files'] != immutable_files(Path(root))
             or ctl.payload_files(root) != cut['files']):
@@ -154,11 +183,12 @@ def main():
     sub=p.add_subparsers(dest='action',required=True)
     prep=sub.add_parser('prepare');prep.add_argument('root',type=Path);prep.add_argument('output',type=Path)
     prep.add_argument('--source',type=Path,required=True);prep.add_argument('--capture-versions',type=Path,required=True)
+    prep.add_argument('--rebase-refresh-sha256');prep.add_argument('--capture-manifest-sha256')
     apply=sub.add_parser('apply');apply.add_argument('root',type=Path);apply.add_argument('plan',type=Path);apply.add_argument('--sha256',required=True)
     a=p.parse_args()
     import os; os.umask(0o077)
     try:
-        if a.action=='prepare':result=prepare(a.root,a.output,a.source,ctl.read(a.capture_versions))
+        if a.action=='prepare':result=prepare(a.root,a.output,a.source,ctl.read(a.capture_versions),a.rebase_refresh_sha256,a.capture_manifest_sha256)
         else:result=ctl.refresh(a.root,a.plan,a.sha256)
         print(dump(result))
     except (ValueError,OSError,KeyError,sqlite3.Error) as e:p.exit(1,'Portable final refresh refused: '+str(e)+'\n')
