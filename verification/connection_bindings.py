@@ -21,7 +21,7 @@ ca=Connection(id='A',url='http://owned-a',backend_generation='native-A',account_
 cb=Connection(id='B',url='http://owned-b',backend_generation='native-B',account_scope='operator-B',enable_writes=True)
 bind_connection(root,ca);legacy=(root/'connection-binding.json').read_bytes()
 e=Engine(root,None,unconfigured(Invoke,'INVOKE_UNCONFIGURED'),unconfigured(Atlas,'REFERENCE_UNCONFIGURED'),True,corpus_root=root/'corpus')
-oldp=SCHEMAS['generation.submit'].model_validate({'model':'absent','request_id':'legacy'}).model_dump();oldp={k:v for k,v in oldp.items() if k not in ('connection_id','backend_generation')}
+oldp=SCHEMAS['generation.submit'].model_validate({'model':'absent','request_id':'legacy'}).model_dump();oldp={k:v for k,v in oldp.items() if k not in ('connection_id','backend_generation','output_upscaler')}
 old,_=e.repo.reserve('p','fixture','legacy','generation',oldp)
 e.repo.update(old['id'],'succeeded',{'outputs':['same.png']});e.repo.native({'item_id':1},old['id'])
 record=e.repo.get(old['id']);events=e.repo.connect().execute('select * from events').fetchall()

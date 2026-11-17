@@ -71,8 +71,11 @@ def main():
     os.umask(0o077)
     source = Path(__file__).absolute().parents[1]
     installed = Path(atlas_engine.__file__).parent
-    expected = {f.name: sha(f.read_bytes()) for f in (source/'atlas_engine').glob('*.py')}
-    actual = {f.name: sha(f.read_bytes()) for f in installed.glob('*.py')}
+    def package_files(root):
+        return {str(f.relative_to(root)): sha(f.read_bytes()) for f in root.rglob('*')
+                if f.is_file() and '__pycache__' not in f.parts and f.suffix != '.pyc'}
+    expected = package_files(source/'atlas_engine')
+    actual = package_files(installed)
     assert expected == actual and installed != source/'atlas_engine'
     with zipfile.ZipFile(a.wheel) as z:
         payload = {n.removeprefix('atlas_engine/'): sha(z.read(n)) for n in z.namelist()

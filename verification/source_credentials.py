@@ -5,6 +5,8 @@ import json
 from pathlib import Path
 import secrets
 import threading
+import socket
+from unittest.mock import patch
 from atlas_engine.onboarding import Onboarding
 from atlas_engine.contracts import Fault
 
@@ -35,10 +37,18 @@ def main():
         try:o.json(base+'/echo')
         except Fault as e:assert e.code=='SOURCE_REDACTED'
         else:raise AssertionError('credential echo accepted')
-        try:o.json('https://civitai.com/api/v1/models/1')
-        except Fault as e:assert e.code=='SOURCE_URL'
-        else:raise AssertionError('unconfigured source accepted')
-        result={'status':'pass','checks':['explicit metadata credential','fresh per-hop image clients without auth/cookie','credential echo refused','wrong source refused'],'requests':observed}
+        # URL validation checks DNS before the source allowlist. Make only that
+        # lookup deterministic: no public request is authorized by this fixture.
+        before = len(observed)
+        for address in ('93.184.216.34', '127.0.0.1'):
+            with patch('atlas_engine.onboarding.socket.getaddrinfo', return_value=[
+                    (socket.AF_INET, socket.SOCK_STREAM, 6, '', (address, 443))]) as dns:
+                try:o.json('https://civitai.com/api/v1/models/1')
+                except Fault as e:assert e.code=='SOURCE_URL'
+                else:raise AssertionError('unconfigured source accepted')
+                dns.assert_called_once()
+        assert len(observed) == before
+        result={'status':'pass','checks':['explicit metadata credential','fresh per-hop image clients without auth/cookie','credential echo refused','wrong source refused with deterministic public DNS; private DNS still refused'],'requests':observed}
         (a.out/'result.json').write_text(json.dumps(result));print(json.dumps(result))
     finally:server.shutdown();server.server_close();t.join()
 
